@@ -1,0 +1,35 @@
+# Distributed Multimodal Video Note-Taking Agent (KeyFrame-AI)
+# Worker & Pipeline Dependencies
+
+# Messaging & Task Queue
+aio-pika>=9.4.0
+
+# Database & Async Persistence
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
+aiosqlite>=0.20.0
+
+# Distributed Caching & Rate Limiting
+redis>=5.0.0
+
+# Configuration & Data Validation
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+
+# Media & Transcript Extraction
+youtube-transcript-api>=0.6.2
+yt-dlp>=2024.8.0
+
+# Multimodal LLM Providers
+google-genai>=0.1.1
+google-generativeai>=0.8.0
+openai>=1.30.0
+
+# Notion Publishing
+notion-client>=2.2.1
+
+# Testing & Quality Assurance
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-mock>=3.14.0
+
