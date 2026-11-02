@@ -50,3 +50,9 @@ frames/
 .DS_Store
 Thumbs.db
 
+# Project plans and internal guides
+USER_PLAN.md
+FRIEND_PLAN.md
+plan.md
+
+
