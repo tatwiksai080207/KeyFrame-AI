@@ -1,0 +1,33 @@
+from typing import Optional
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, Field, field_validator
+
+ALLOWED_YOUTUBE_HOSTS = {"www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be"}
+
+class JobCreateRequest(BaseModel):
+
+    youtube_url: str = Field(
+        ...,
+        description="Full YouTube video URL",
+        examples=["https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+    )
+    notion_token: str = Field(..., min_length=1, description="Notion OAuth / integration token")
+    notion_parent_id: Optional[str] = Field(
+        default=None, description="Notion parent page / database ID"
+    )
+
+    @field_validator("youtube_url")
+    @classmethod
+    def validate_youtube_url(cls, value: str) -> str:
+        value = value.strip()
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https") or parsed.hostname not in ALLOWED_YOUTUBE_HOSTS:
+            raise ValueError("Invalid YouTube URL. Expected a youtube.com/watch or youtu.be link.")
+        return value
+
+
+class JobCreateResponse(BaseModel):
+    job_id: str
+    status: str = "QUEUED"
+    video_id: str
