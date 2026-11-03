@@ -1,0 +1,30 @@
+# KeyFrame-AI Worker Process Dockerfile
+FROM python:3.12-slim
+
+# Prevent Python from writing .pyc files and enable unbuffered output
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies: ffmpeg for video frame capture
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Create shared storage directory for media frames
+RUN mkdir -p /shared/frames && chmod 777 /shared/frames
+
+# Copy application packages
+COPY common/ common/
+COPY worker/ worker/
+
+# Launch worker consumer daemon
+CMD ["python", "-m", "worker.main"]
+
