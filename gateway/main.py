@@ -12,6 +12,7 @@ from sqlalchemy import text
 from common.broker import get_connection, setup_topology
 from common.db import get_engine, init_db
 from common.config import get_settings
+from gateway.routes import router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
 
     await get_engine().dispose()
     logger.info("Gateway shut down")
-    
+
 
 app = FastAPI(
     title="KeyFrame-AI API Gateway",
@@ -54,6 +55,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(router)
 
 async def check_postgres() -> None:
     async with get_engine().connect() as conn:
