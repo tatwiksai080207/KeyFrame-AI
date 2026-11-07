@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
@@ -31,3 +31,21 @@ class JobCreateResponse(BaseModel):
     job_id: str
     status: str = "QUEUED"
     video_id: str
+
+class JobStatusResponse(BaseModel):
+    # GET /jobs/{job_id}
+    job_id: str
+    status: str
+    progress: int = Field(ge=0, le=100)
+    video_title: Optional[str] = None
+    duration_sec: Optional[int] = None
+    warnings: List[Dict[str, Any]] = Field(default_factory=list)
+    error: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
+
+
+class JobResultResponse(BaseModel):
+    # GET /jobs/{job_id}/results 
+    status: str
+    result: Dict[str, Any]
+    warnings: List[Dict[str, Any]] = Field(default_factory=list)

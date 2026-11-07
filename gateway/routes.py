@@ -10,7 +10,7 @@ from common.broker import StageMessage, publish_stage_task
 from common.config import get_settings
 from common.db import get_db_session
 from common.models import Job, JobStatus
-from gateway.schemas import JobCreateRequest, JobCreateResponse
+from gateway.schemas import JobCreateRequest, JobCreateResponse, JobResultResponse, JobStatusResponse
 
 logger = logging.getLogger("keyframe.gateway.routes")
 
@@ -81,3 +81,64 @@ async def create_job(payload: JobCreateRequest, response: Response):
     response.headers["Location"] = f"/jobs/{job_id}"
     logger.info("Job %s queued for video %s", job_id, video_id)
     return JobCreateResponse(job_id=job_id, status=JobStatus.QUEUED.value, video_id=video_id)
+
+async def load_job(job_id: str) -> Job:
+    """Fetches a job by ID or raises 404."""
+    async with get_db_session() as session:
+        job = await session.get(Job, job_id)
+
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    return job
+
+
+def build_result(job: Job) -> dict:
+    """Builds the final result payload."""
+    requested = len((job.llm_summary or {}).get("key_moments", []))
+    published = len(job.extracted_frames or [])
+
+    return {
+        "notion_page_url": job.notion_page_url,
+        "frames_requested": requested,
+        "frames_published": published,
+    }
+
+
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(job_id: str):
+    """Read-only and idempotent: polling never changes job state."""
+    job = await load_job(job_id)
+
+    result = None
+    if JobStatus(job.status).is_terminal and job.notion_page_url:
+        result = build_result(job)
+
+    return JobStatusResponse(
+        job_id=job.id,
+        status=job.status,
+        progress=job.progress,
+        video_title=job.video_title,
+        duration_sec=job.duration_sec,
+        warnings=job.warnings or [],
+        error=job.error,
+        result=result,
+    )
+
+
+@router.get("/jobs/{job_id}/results", response_model=JobResultResponse)
+async def get_job_results(job_id: str):
+    """Returns 409 while running and 200 after a terminal state."""
+    job = await load_job(job_id)
+
+    if not JobStatus(job.status).is_terminal:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is still running (current stage: {job.status}).",
+        )
+
+    return JobResultResponse(
+        status=job.status,
+        result=build_result(job),
+        warnings=job.warnings or [],
+    )
