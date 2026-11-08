@@ -41,6 +41,7 @@ frames/
 *.jpg
 *.jpeg
 *.png
+!extension/icons/*.png
 
 # IDE / OS
 .idea/
