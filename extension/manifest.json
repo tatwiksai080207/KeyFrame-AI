@@ -3,6 +3,11 @@
   "name": "KeyFrame-AI: Video Note Taker",
   "version": "0.1.0",
   "description": "Turn YouTube videos into structured Notion study notes with real extracted frames.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["http://localhost:8000/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
