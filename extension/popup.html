@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KeyFrame-AI</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <img src="icons/icon48.png" alt="" width="24" height="24" />
+    <h1>KeyFrame-AI</h1>
+  </header>
+
+  <p id="conn-error" class="banner error" hidden></p>
+
+  <section id="empty-state">
+    <p class="empty-title">No notes in progress</p>
+    <p class="hint">Open a YouTube video and click Take Notes below the player.</p>
+  </section>
+
+  <section id="job-view" hidden>
+    <h2 id="video-title">Preparing your video...</h2>
+    <div class="progress"><div id="progress-bar" class="progress-bar"></div></div>
+    <p id="progress-text" class="progress-text">0%</p>
+
+    <ol id="stages" class="stages">
+      <li>Queued</li>
+      <li>Transcribing</li>
+      <li>Summarizing</li>
+      <li>Extracting Frames</li>
+      <li>Publishing</li>
+      <li>Done</li>
+    </ol>
+
+    <div id="banner" class="banner" hidden></div>
+    <a id="notion-link" class="btn" href="#" target="_blank" rel="noopener noreferrer" hidden>View in Notion</a>
+  </section>
+
+  <details class="settings">
+    <summary>Settings</summary>
+    <label for="token-input">Notion integration token</label>
+    <input id="token-input" type="password" placeholder="secret_..." autocomplete="off" />
+    <label for="api-input">Server address</label>
+    <input id="api-input" type="url" />
+    <button id="save-settings" type="button">Save</button>
+    <p id="settings-status" class="hint"></p>
+  </details>
+</body>
+</html>

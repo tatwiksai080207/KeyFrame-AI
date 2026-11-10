@@ -1,0 +1,140 @@
+:root {
+  --bg: #ffffff;
+  --surface: #f8fafc;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --success: #16a34a;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; } /* otherwise the display rules below would beat the hidden attribute */
+
+body {
+  width: 360px;
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+h1 { margin: 0; font-size: 15px; font-weight: 600; }
+p { margin: 0; }
+.hint { color: var(--muted); font-size: 12px; }
+
+/* Empty state */
+#empty-state { padding: 20px 8px; text-align: center; }
+.empty-title { margin-bottom: 4px; font-weight: 600; }
+
+/* Job card */
+#job-view {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+h2 {
+  margin: 0 0 10px;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.progress-bar { width: 0; height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.progress-text { margin: 6px 0 14px; color: var(--muted); font-size: 12px; }
+
+/* Stage list: a marker per step, filled as the job moves along */
+.stages { margin: 0 0 14px; padding: 0; list-style: none; }
+.stages li {
+  position: relative;
+  padding: 5px 0 5px 24px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.stages li::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg);
+}
+.stages li.done { color: var(--text); }
+.stages li.done::before { border-color: var(--success); background: var(--success); }
+.stages li.active { color: var(--text); font-weight: 600; }
+.stages li.active::before {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+/* Messages */
+.banner {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 4px solid;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.banner.warning { border-color: #d97706; background: #fffbeb; color: #92400e; }
+.banner.error { border-color: #dc2626; background: #fef2f2; color: #991b1b; }
+
+/* Buttons */
+.btn {
+  display: block;
+  padding: 9px 14px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+.btn:hover { background: var(--accent-hover); }
+
+/* Settings */
+.settings { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.settings summary { color: var(--muted); font-size: 13px; cursor: pointer; }
+.settings label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
+.settings input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.settings input:focus { border-color: var(--accent); outline: 2px solid rgba(37, 99, 235, 0.2); }
+.settings button {
+  margin-top: 12px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.settings button:hover { background: var(--surface); }
+.settings .hint { margin-top: 8px; }
