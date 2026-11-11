@@ -89,12 +89,58 @@ async function refreshActiveJob() {
   }
 }
 
+// One-time Notion sign-in
+async function connectNotion() {
+  const { client_id } = await apiRequest("/auth/notion/config");
+  const redirectUri = chrome.identity.getRedirectURL("notion");
+  const state = crypto.randomUUID(); // protects against forged redirects (CSRF)
+
+  const authUrl =
+    "https://api.notion.com/v1/oauth/authorize?" +
+    new URLSearchParams({
+      client_id,
+      response_type: "code",
+      owner: "user",
+      redirect_uri: redirectUri,
+      state,
+    });
+
+  let responseUrl;
+  try {
+    responseUrl = await chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true });
+  } catch (err) {
+    throw new Error("Notion sign-in was cancelled.");
+  }
+
+  const params = new URL(responseUrl).searchParams;
+  if (params.get("error")) throw new Error("Notion access was not granted.");
+  if (params.get("state") !== state) throw new Error("Sign-in was interrupted. Please try again.");
+
+  const result = await apiRequest("/auth/notion/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: params.get("code"), redirect_uri: redirectUri }),
+  });
+
+  await chrome.storage.local.set({
+    notion_token: result.access_token,
+    notion_workspace: result.workspace_name || "Notion",
+  });
+  return result.workspace_name;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "START_JOB") {
     startJob(message.videoId)
       .then((job) => sendResponse({ success: true, job_id: job.job_id }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true; 
+  }
+  if (message.type === "CONNECT_NOTION") {
+    connectNotion()
+      .then((workspace) => sendResponse({ success: true, workspace }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
   }
   if (message.type === "GET_STATUS") {
     refreshActiveJob()

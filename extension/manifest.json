@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAj6GJED2Y4UJbJeBkGhGPoLyKkHSGOPg7MynRIteQkJh3Iz8w/ehko8dyiV1GAyJY8oRw1cfNOL63V7Bag2TuRAvBmrONN0JU/pFlE49rCq+BrKHX6GJIj0SY0JS/NuC5V8GexpOPvpz4Cp8yLai5As4zWV24bICKFfwKb3tAz6oUieGmn6Zs4EboZzOARncRal14oC7M2/3i5QYn9O+zCrqu1gWh94eNlbEQiziztIh4182D4P9aXovsJwLXbiGPe4Y893ABKrDsQEHjE7KAAS/0MP3L6Xth/K0IXUKCd2sXa0b6wyjZsdoShhEDuEVkIGX4aeuVhufBa4lOH8iVgQIDAQAB",
   "name": "KeyFrame-AI: Video Note Taker",
   "version": "0.1.0",
   "description": "Turn YouTube videos into structured Notion study notes with real extracted frames.",
-  "permissions": ["storage", "alarms"],
+  "permissions": ["storage", "alarms", "identity"],
   "host_permissions": ["http://localhost:8000/*"],
   "background": {
     "service_worker": "background.js"
@@ -21,7 +22,7 @@
       "run_at": "document_idle"
     }
   ],
-    "action": {
+  "action": {
     "default_popup": "popup.html",
     "default_title": "KeyFrame-AI"
   }

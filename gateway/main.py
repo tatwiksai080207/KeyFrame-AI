@@ -17,6 +17,7 @@ from common.broker import get_connection, setup_topology
 from common.db import get_engine, init_db
 from common.config import get_settings
 from gateway.routes import router
+from gateway.auth import router as auth_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,6 +69,7 @@ app.add_middleware(
 )
 
 ERROR_CODES = {
+    400: "BAD_REQUEST",
     404: "NOT_FOUND",
     409: "JOB_NOT_FINISHED",
     422: "INVALID_REQUEST",
@@ -112,6 +114,8 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
 
 app.include_router(router)
+
+app.include_router(auth_router) 
 
 async def check_postgres() -> None:
     async with get_engine().connect() as conn:

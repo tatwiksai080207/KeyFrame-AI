@@ -51,6 +51,9 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       REDIS_URL: redis://redis:6379/0
       FRAME_STORAGE_DIR: /shared/frames
+      NOTION_DEFAULT_PARENT_PAGE_ID: ${NOTION_DEFAULT_PARENT_PAGE_ID:-}
+      NOTION_OAUTH_CLIENT_ID: ${NOTION_OAUTH_CLIENT_ID:-}
+      NOTION_OAUTH_CLIENT_SECRET: ${NOTION_OAUTH_CLIENT_SECRET:-}
     volumes:
       - frame_storage:/shared/frames
     depends_on:

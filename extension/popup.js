@@ -187,6 +187,40 @@ function stopPolling() {
   }
 }
 
+async function renderConnection() {
+  const { notion_token, notion_workspace } = await chrome.storage.local.get({
+    notion_token: "",
+    notion_workspace: "",
+  });
+  const connected = Boolean(notion_token);
+  $("connection-status").textContent = connected
+    ? `Connected to ${notion_workspace || "Notion"}`
+    : "Notion is not connected.";
+  $("connect-notion").textContent = connected
+    ? "Reconnect Notion"
+    : "Connect Notion";
+}
+
+async function connectNotion() {
+  const button = $("connect-notion");
+  button.disabled = true;
+  button.textContent = "Waiting for Notion...";
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "CONNECT_NOTION",
+    });
+    showConnectionProblem(
+      response && response.success
+        ? ""
+        : (response && response.error) || "Could not connect to Notion.",
+    );
+  } catch (err) {
+    // The popup closes while Notion's window is open; the background keeps going.
+  }
+  button.disabled = false;
+  renderConnection();
+}
+
 async function loadSettings() {
   const settings = await chrome.storage.local.get({
     api_base_url: "http://localhost:8000",
@@ -226,6 +260,9 @@ async function init() {
   $("save-settings").addEventListener("click", saveSettings);
   loadSettings();
 
+  $("connect-notion").addEventListener("click", connectNotion);
+  renderConnection();
+
   const { active_job_status } =
     await chrome.storage.local.get("active_job_status");
   render(active_job_status || null);
@@ -239,7 +276,9 @@ async function init() {
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes.active_job_id) {
+    if (area !== "local") return;
+    if (changes.notion_token || changes.notion_workspace) renderConnection();
+    if (changes.active_job_id) {
       refresh();
       startPolling();
     }

@@ -138,3 +138,9 @@ h2 {
 }
 .settings button:hover { background: var(--surface); }
 .settings .hint { margin-top: 8px; }
+
+/* Connect */
+#connect { margin-bottom: 14px; }
+#connect .hint { margin-bottom: 8px; }
+button.btn { width: 100%; border: none; font-family: inherit; cursor: pointer; }
+button.btn:disabled { opacity: 0.7; cursor: default; }
