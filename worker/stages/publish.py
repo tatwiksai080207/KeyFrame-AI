@@ -68,6 +68,24 @@ def upload_frame_to_public_host(image_path: str) -> Optional[str]:
     return None
 
 
+def _resolve_image_url(
+    raw_path: str,
+    job_id: str,
+    ts: int,
+    settings: Any,
+    public_url_fn: Optional[Callable[[str], str]] = None,
+) -> str:
+    """Helper resolving accessible HTTP/HTTPS URL for Notion block rendering."""
+    if public_url_fn:
+        return public_url_fn(raw_path)
+    elif settings.public_base_url:
+        filename = os.path.basename(raw_path) or f"{job_id}_{ts}.jpg"
+        return f"{settings.public_base_url.rstrip('/')}/frames/{filename}"
+    else:
+        public_url = upload_frame_to_public_host(raw_path)
+        return public_url or f"http://localhost:8000/frames/{job_id}_{ts}.jpg"
+
+
 def construct_page_blocks(
     job: Job,
     public_url_fn: Optional[Callable[[str], str]] = None,
@@ -79,7 +97,9 @@ def construct_page_blocks(
     # 1. Header Callout with metadata
     duration_min = (job.duration_sec or 0) // 60
     duration_rem_sec = (job.duration_sec or 0) % 60
-    callout_text = f"Source Video: {job.youtube_url} | Duration: {duration_min}m {duration_rem_sec}s"
+    summary_data = job.llm_summary or {}
+    video_type = summary_data.get("video_type", "Technical Video")
+    callout_text = f"Source Video: {job.youtube_url} | Type: {video_type} | Duration: {duration_min}m {duration_rem_sec}s"
     blocks.append(
         {
             "object": "block",
@@ -97,41 +117,68 @@ def construct_page_blocks(
     )
 
     # 2. Executive Overview
-    summary_data = job.llm_summary or {}
     overview = summary_data.get("overview")
     if overview:
         blocks.append(build_text_block("heading_2", "Overview"))
         blocks.append(build_text_block("paragraph", overview))
 
-    # 3. Topic Sections with Bullet Points
+    # 3. Key Resources and References from Video Description
+    key_resources = summary_data.get("key_resources", [])
+    if key_resources:
+        blocks.append(build_text_block("heading_2", "Key Resources and References"))
+        for res_item in key_resources:
+            blocks.append(build_text_block("bulleted_list_item", str(res_item)))
+
+    # 4. Topic Sections with Contextual Inline Slides
     sections = summary_data.get("sections", [])
-    for sec in sections:
+    extracted_frames = job.extracted_frames or []
+
+    assigned_frame_paths = set()
+    num_sections = len(sections)
+    duration = job.duration_sec or 1200
+    section_window = duration / max(num_sections, 1)
+
+    for idx, sec in enumerate(sections):
         title = sec.get("section_title", "Key Insights")
         bullets = sec.get("bullet_points", [])
         blocks.append(build_text_block("heading_2", title))
         for bullet in bullets:
             blocks.append(build_text_block("bulleted_list_item", bullet))
 
-    # 4. Visual Keyframes & Slides Section
-    extracted_frames = job.extracted_frames or []
-    if extracted_frames:
-        blocks.append(build_text_block("heading_2", "Visual Slides and Diagrams"))
+        # Associate frames occurring within this topical window
+        sec_start = idx * section_window
+        sec_end = (idx + 1) * section_window
+        title_keywords = [w for w in title.lower().split() if len(w) > 3]
+
+        sec_frames = []
         for frame in extracted_frames:
+            f_path = frame.get("image_path", "")
+            if f_path in assigned_frame_paths:
+                continue
+            ts = frame.get("timestamp_sec", 0)
+            caption_lower = frame.get("caption", "").lower()
+            keyword_match = any(k in caption_lower for k in title_keywords)
+
+            if (sec_start <= ts <= sec_end) or keyword_match:
+                sec_frames.append(frame)
+                assigned_frame_paths.add(f_path)
+
+        for frame in sec_frames:
+            ts = frame.get("timestamp_sec", 0)
+            caption = frame.get("caption", f"Slide captured at {ts}s")
+            raw_path = frame.get("image_path", "")
+            image_url = _resolve_image_url(raw_path, job.id, ts, settings, public_url_fn)
+            blocks.append(build_image_block(image_url=image_url, caption_text=caption))
+
+    # 5. Remaining Visual Keyframes Gallery
+    remaining_frames = [f for f in extracted_frames if f.get("image_path") not in assigned_frame_paths]
+    if remaining_frames:
+        blocks.append(build_text_block("heading_2", "Visual Slides and Diagrams"))
+        for frame in remaining_frames:
             ts = frame.get("timestamp_sec", 0)
             caption = frame.get("caption", f"Frame captured at {ts}s")
             raw_path = frame.get("image_path", "")
-
-            # Resolve public HTTPS URL for Notion block rendering
-            if public_url_fn:
-                image_url = public_url_fn(raw_path)
-            elif settings.public_base_url:
-                filename = os.path.basename(raw_path) or f"{job.id}_{ts}.jpg"
-                image_url = f"{settings.public_base_url.rstrip('/')}/frames/{filename}"
-            else:
-                public_url = upload_frame_to_public_host(raw_path)
-                image_url = public_url or f"http://localhost:8000/frames/{job.id}_{ts}.jpg"
-
-            # Enforce Constraint B: frame image paired with explanatory caption
+            image_url = _resolve_image_url(raw_path, job.id, ts, settings, public_url_fn)
             blocks.append(build_image_block(image_url=image_url, caption_text=caption))
 
     return blocks

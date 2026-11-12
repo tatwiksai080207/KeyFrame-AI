@@ -17,8 +17,8 @@ from common.config import get_settings
 from common.models import Job, JobStatus
 
 
-def extract_metadata_from_ytdlp(youtube_url: str) -> Tuple[Optional[int], Optional[str]]:
-    """Extracts video title and duration using yt-dlp metadata inspection without downloading."""
+def extract_metadata_from_ytdlp(youtube_url: str) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+    """Extracts video title, duration, and description using yt-dlp metadata inspection without downloading."""
     try:
         import yt_dlp
 
@@ -33,17 +33,18 @@ def extract_metadata_from_ytdlp(youtube_url: str) -> Tuple[Optional[int], Option
             if info:
                 duration = info.get("duration")
                 title = info.get("title")
-                return (int(duration) if duration is not None else None, title)
+                description = info.get("description")
+                return (int(duration) if duration is not None else None, title, description)
     except Exception:
         pass
-    return None, None
+    return None, None, None
 
 
 async def fetch_transcript_and_metadata(
     video_id: str,
     youtube_url: str,
-) -> Tuple[List[Dict[str, Any]], int, Optional[str]]:
-    """Fetches timestamped captions and calculates true duration and title."""
+) -> Tuple[List[Dict[str, Any]], int, Optional[str], Optional[str]]:
+    """Fetches timestamped captions and calculates true duration, title, and description."""
     # Run synchronous YouTubeTranscriptApi and yt-dlp in threadpool to avoid blocking async loop
     loop = asyncio.get_running_loop()
 
@@ -80,15 +81,19 @@ async def fetch_transcript_and_metadata(
     last_item = transcript_list[-1]
     calculated_duration = math.ceil(last_item["start"] + last_item.get("duration", 0.0))
 
-    # Also attempt to obtain exact title and duration from yt-dlp
-    ytdlp_duration, ytdlp_title = await loop.run_in_executor(
+    # Also attempt to obtain exact title, duration, and description from yt-dlp
+    ytdlp_meta = await loop.run_in_executor(
         None, extract_metadata_from_ytdlp, youtube_url
     )
+    ytdlp_duration = ytdlp_meta[0] if ytdlp_meta else None
+    ytdlp_title = ytdlp_meta[1] if ytdlp_meta and len(ytdlp_meta) > 1 else None
+    ytdlp_description = ytdlp_meta[2] if ytdlp_meta and len(ytdlp_meta) > 2 else None
 
     final_duration = ytdlp_duration if ytdlp_duration is not None else calculated_duration
     final_title = ytdlp_title or f"YouTube Video ({video_id})"
+    final_description = ytdlp_description
 
-    return transcript_list, final_duration, final_title
+    return transcript_list, final_duration, final_title, final_description
 
 
 async def process_transcribe_stage(
@@ -111,9 +116,13 @@ async def process_transcribe_stage(
         await session.commit()
 
     try:
-        transcript, duration_sec, video_title = await fetch_transcript_and_metadata(
+        fetch_res = await fetch_transcript_and_metadata(
             task.video_id, task.youtube_url
         )
+        transcript = fetch_res[0]
+        duration_sec = fetch_res[1]
+        video_title = fetch_res[2]
+        video_description = fetch_res[3] if len(fetch_res) > 3 else None
     except (TranscriptsDisabled, NoTranscriptFound) as e:
         job.transition_to(
             JobStatus.FAILED,
@@ -143,6 +152,7 @@ async def process_transcribe_stage(
     if duration_sec > settings.max_video_duration_sec:
         job.duration_sec = duration_sec
         job.video_title = video_title
+        job.video_description = video_description
         job.transition_to(
             JobStatus.FAILED,
             error={
@@ -156,10 +166,11 @@ async def process_transcribe_stage(
         await session.commit()
         return False
 
-    # Store transcript, duration, and title
+    # Store transcript, duration, title, and description
     job.raw_transcript = transcript
     job.duration_sec = duration_sec
     job.video_title = video_title
+    job.video_description = video_description
 
     # Transition to SUMMARIZING stage
     job.transition_to(JobStatus.SUMMARIZING)

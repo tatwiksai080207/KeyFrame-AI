@@ -86,8 +86,20 @@ def merge_synthesis_results(results: List[SynthesisResult]) -> SynthesisResult:
     # Sort key moments chronologically
     merged_moments.sort(key=lambda m: m.timestamp_sec)
 
+    all_resources = []
+    seen_resources = set()
+    for r in results:
+        for res_item in getattr(r, "key_resources", []):
+            if res_item not in seen_resources:
+                seen_resources.add(res_item)
+                all_resources.append(res_item)
+
+    first_video_type = results[0].video_type if results and hasattr(results[0], "video_type") else "Technical Video"
+
     return SynthesisResult(
+        video_type=first_video_type,
         overview=merged_overview,
+        key_resources=all_resources,
         sections=merged_sections,
         key_moments=merged_moments,
     )
@@ -144,6 +156,7 @@ async def process_summarize_stage(
                 transcript_text=chunk,
                 video_title=job.video_title,
                 duration_sec=job.duration_sec,
+                video_description=job.video_description,
             )
             partial_results.append(chunk_res)
 
@@ -198,7 +211,9 @@ async def process_summarize_stage(
 
     # Store synthesis outputs in database
     job.llm_summary = {
+        "video_type": getattr(final_synthesis, "video_type", "Technical Video"),
         "overview": final_synthesis.overview,
+        "key_resources": getattr(final_synthesis, "key_resources", []),
         "sections": [s.model_dump() for s in final_synthesis.sections],
         "key_moments": verified_key_moments,
     }

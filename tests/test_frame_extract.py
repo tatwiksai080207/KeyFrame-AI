@@ -3,7 +3,7 @@
 import os
 import pytest
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -205,4 +205,62 @@ async def test_frame_extract_stage_complete_stream_failure(tmp_path):
         assert updated_job.warnings[0]["code"] == "FRAME_EXTRACTION_FAILED"
 
         mock_publish.assert_called_once()
+
+
+def test_dhash_and_blank_detection_edge_cases(tmp_path):
+    """Verify difference hash and blank frame detector handle missing or empty files cleanly."""
+    from worker.stages.frame_extract import compute_image_dhash, is_blank_or_solid_frame
+
+    non_existent = str(tmp_path / "missing.jpg")
+    assert compute_image_dhash(non_existent) is None
+    assert is_blank_or_solid_frame(non_existent) is True
+
+    empty_file = tmp_path / "empty.jpg"
+    empty_file.write_bytes(b"")
+    assert compute_image_dhash(str(empty_file)) is None
+    assert is_blank_or_solid_frame(str(empty_file)) is True
+
+
+@pytest.mark.asyncio
+async def test_verify_and_curate_frame_offset_and_vision_fallback(tmp_path):
+    """Verify verify_and_curate_frame evaluates vision feedback and deduplicates slides."""
+    from unittest.mock import MagicMock
+    from worker.stages.frame_extract import verify_and_curate_frame
+
+    mock_adapter = MagicMock()
+    # First candidate at ts=10 is talking head; second candidate at ts=15 is informative slide
+    mock_adapter.evaluate_frame = AsyncMock(
+        side_effect=[
+            {"is_informative": False, "summary": "talking head"},
+            {"is_informative": True, "summary": "technical architecture diagram"},
+        ]
+    )
+
+    def mock_capture(url, ts, out_path):
+        # Write dummy byte data so file exists on disk
+        with open(out_path, "wb") as f:
+            f.write(b"dummy_image_data")
+        return True
+
+    with patch("worker.stages.frame_extract.is_blank_or_solid_frame", return_value=False), \
+         patch("worker.stages.frame_extract.compute_image_dhash", side_effect=[12345, 67890]):
+
+        result = await verify_and_curate_frame(
+            stream_url="https://test.googlevideo.com/playback",
+            target_storage=str(tmp_path),
+            job_id="curate_job_1",
+            timestamp_sec=10,
+            caption="Architecture slide",
+            video_duration=600,
+            seen_hashes=[],
+            capture_fn=mock_capture,
+            llm_adapter=mock_adapter,
+        )
+
+        assert result is not None
+        chosen_path, chosen_ts, chosen_hash = result
+        # Must have advanced to offset +5 (ts=15) because ts=10 was talking head
+        assert chosen_ts == 15
+        assert chosen_hash == 67890
+
 

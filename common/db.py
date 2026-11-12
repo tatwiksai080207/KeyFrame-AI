@@ -64,6 +64,11 @@ async def init_db(engine: Optional[AsyncEngine] = None) -> None:
     active_engine = engine or get_engine()
     async with active_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        from sqlalchemy import text
+        try:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS video_description TEXT;"))
+        except Exception:
+            pass
 
 
 @asynccontextmanager

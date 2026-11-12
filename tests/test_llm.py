@@ -157,3 +157,31 @@ async def test_openai_adapter_synthesize_mock():
     assert len(result.key_moments) == 1
     assert result.key_moments[0].timestamp_sec == 210
     assert "State diagram" in result.key_moments[0].caption
+
+
+def test_synthesis_result_adaptive_video_type_and_resources():
+    """Verify SynthesisResult correctly captures detected video archetype and extracted resources."""
+    res = SynthesisResult(
+        video_type="Architecture Walkthrough",
+        overview="High level walkthrough of distributed system messaging.",
+        key_resources=[
+            "https://github.com/rabbitmq/rabbitmq-server",
+            "https://docs.celeryq.dev/en/stable/",
+        ],
+        sections=[
+            SummarySection(
+                section_title="Broker Topology",
+                bullet_points=["Topic exchanges route messages via bindings"],
+            )
+        ],
+        key_moments=[
+            SlideKeyMoment(
+                timestamp_sec=95,
+                caption="Architecture diagram illustrating AMQP exchange routing.",
+            )
+        ],
+    )
+    assert res.video_type == "Architecture Walkthrough"
+    assert len(res.key_resources) == 2
+    assert "rabbitmq" in res.key_resources[0]
+

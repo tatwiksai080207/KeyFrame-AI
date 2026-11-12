@@ -38,11 +38,14 @@ class OpenAIAdapter(BaseLLMAdapter):
         transcript_text: str,
         video_title: Optional[str] = None,
         duration_sec: Optional[int] = None,
+        video_description: Optional[str] = None,
     ) -> SynthesisResult:
         """Invokes OpenAI model asynchronously to synthesize study notes and keyframes."""
         duration_info = f"\nVideo Duration: {duration_sec} seconds" if duration_sec else ""
+        desc_info = f"\nVideo Description:\n{video_description}\n" if video_description else ""
         prompt = (
-            f"Video Title: {video_title or 'Untitled Video'}{duration_info}\n\n"
+            f"Video Title: {video_title or 'Untitled Video'}{duration_info}\n"
+            f"{desc_info}\n"
             f"Timestamped Transcript Content:\n{transcript_text}\n\n"
             f"Reminder: Each timestamp_sec must be an exact integer seconds value taken directly from the [{'{seconds}'}s] markers and must not exceed the video duration. Never output concatenated minute and second digits."
         )

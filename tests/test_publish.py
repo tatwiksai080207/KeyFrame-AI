@@ -228,3 +228,59 @@ async def test_process_publish_stage_missing_parent():
         assert updated_job.status == JobStatus.FAILED.value
         assert updated_job.error["code"] == "MISSING_NOTION_PARENT_PAGE_ID"
 
+
+def test_construct_page_blocks_with_resources_and_inline_slides():
+    """Verify construct_page_blocks renders video resources from description and embeds slides inline."""
+    job = Job(
+        video_id="resources_vid",
+        youtube_url="https://www.youtube.com/watch?v=resources_vid",
+        notion_token="secret_key",
+        duration_sec=600,
+        llm_summary={
+            "video_type": "Technical Tutorial",
+            "overview": "Comprehensive walkthrough of Docker microservices.",
+            "key_resources": [
+                "GitHub Repo: https://github.com/example/repo",
+                "Official Docs: https://docs.example.com",
+            ],
+            "sections": [
+                {
+                    "section_title": "Container Setup",
+                    "bullet_points": ["Run compose up", "Verify healthchecks"],
+                }
+            ],
+            "key_moments": [
+                {"timestamp_sec": 45, "caption": "Terminal showing docker compose output."}
+            ],
+        },
+        extracted_frames=[
+            {
+                "timestamp_sec": 45,
+                "image_path": "/frames/docker_45.jpg",
+                "caption": "Terminal showing docker compose output.",
+            }
+        ],
+    )
+
+    blocks = construct_page_blocks(job)
+
+    # Verify video type is rendered in header callout
+    assert "Technical Tutorial" in blocks[0]["callout"]["rich_text"][0]["text"]["content"]
+
+    # Verify Key Resources and References section exists
+    headings = [b["heading_2"]["rich_text"][0]["text"]["content"] for b in blocks if b["type"] == "heading_2"]
+    assert "Key Resources and References" in headings
+
+    bullet_texts = [
+        b["bulleted_list_item"]["rich_text"][0]["text"]["content"]
+        for b in blocks
+        if b["type"] == "bulleted_list_item"
+    ]
+    assert any("https://github.com/example/repo" in t for t in bullet_texts)
+
+    # Verify image block is placed contextually
+    image_blocks = [b for b in blocks if b["type"] == "image"]
+    assert len(image_blocks) == 1
+    assert image_blocks[0]["image"]["caption"][0]["text"]["content"] == "Terminal showing docker compose output."
+
+

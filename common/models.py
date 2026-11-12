@@ -122,6 +122,7 @@ class Job(Base):
     video_id: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     youtube_url: Mapped[str] = mapped_column(String(512), nullable=False)
     video_title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    video_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     duration_sec: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     status: Mapped[str] = mapped_column(

@@ -48,7 +48,7 @@ class Settings(BaseSettings):
         validation_alias="OPENAI_API_KEY",
     )
     llm_model: str = Field(
-        default="gemini-3.5-flash",
+        default="gemini-3.5-flash-lite",
         validation_alias="LLM_MODEL",
     )
     llm_rate_limit_rpm: int = Field(
