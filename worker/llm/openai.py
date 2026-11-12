@@ -37,11 +37,14 @@ class OpenAIAdapter(BaseLLMAdapter):
         self,
         transcript_text: str,
         video_title: Optional[str] = None,
+        duration_sec: Optional[int] = None,
     ) -> SynthesisResult:
         """Invokes OpenAI model asynchronously to synthesize study notes and keyframes."""
+        duration_info = f"\nVideo Duration: {duration_sec} seconds" if duration_sec else ""
         prompt = (
-            f"Video Title: {video_title or 'Untitled Video'}\n\n"
-            f"Timestamped Transcript Content:\n{transcript_text}"
+            f"Video Title: {video_title or 'Untitled Video'}{duration_info}\n\n"
+            f"Timestamped Transcript Content:\n{transcript_text}\n\n"
+            f"Reminder: Each timestamp_sec must be an exact integer seconds value taken directly from the [{'{seconds}'}s] markers and must not exceed the video duration. Never output concatenated minute and second digits."
         )
 
         response = await self.client.chat.completions.create(

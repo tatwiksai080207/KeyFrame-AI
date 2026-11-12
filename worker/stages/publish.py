@@ -1,6 +1,7 @@
 """Stage 4: Notion study notes page assembly with structured blocks and slide captions."""
 
 import logging
+import os
 from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,11 +47,33 @@ def build_image_block(image_url: str, caption_text: str) -> Dict[str, Any]:
     }
 
 
+def upload_frame_to_public_host(image_path: str) -> Optional[str]:
+    """Uploads a local image frame to a public image CDN so Notion cloud can embed it."""
+    if not image_path or not os.path.exists(image_path):
+        return None
+    try:
+        import httpx
+
+        with open(image_path, "rb") as f:
+            files = {"source": (os.path.basename(image_path), f.read(), "image/jpeg")}
+            data = {"key": "6d207e02198a847aa98d0a2a901485a5", "action": "upload", "format": "json"}
+            resp = httpx.post("https://freeimage.host/api/1/upload", data=data, files=files, timeout=15)
+            if resp.status_code == 200:
+                result = resp.json()
+                url = (result.get("image") or {}).get("url")
+                if url and url.startswith("http"):
+                    return url
+    except Exception as e:
+        logger.warning(f"Could not upload frame {image_path} to public host: {e}")
+    return None
+
+
 def construct_page_blocks(
     job: Job,
     public_url_fn: Optional[Callable[[str], str]] = None,
 ) -> List[Dict[str, Any]]:
     """Assembles structured Notion block tree: callouts, summary headings, and slide images."""
+    settings = get_settings()
     blocks: List[Dict[str, Any]] = []
 
     # 1. Header Callout with metadata
@@ -101,8 +124,12 @@ def construct_page_blocks(
             # Resolve public HTTPS URL for Notion block rendering
             if public_url_fn:
                 image_url = public_url_fn(raw_path)
+            elif settings.public_base_url:
+                filename = os.path.basename(raw_path) or f"{job.id}_{ts}.jpg"
+                image_url = f"{settings.public_base_url.rstrip('/')}/frames/{filename}"
             else:
-                image_url = f"http://localhost:8000/frames/{job.id}_{ts}.jpg"
+                public_url = upload_frame_to_public_host(raw_path)
+                image_url = public_url or f"http://localhost:8000/frames/{job.id}_{ts}.jpg"
 
             # Enforce Constraint B: frame image paired with explanatory caption
             blocks.append(build_image_block(image_url=image_url, caption_text=caption))

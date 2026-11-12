@@ -3,8 +3,6 @@
 import logging
 import re
 from urllib.parse import parse_qs, urlparse
-import httpx
-from pydantic import BaseModel
 
 from fastapi import APIRouter, HTTPException, Response
 
@@ -20,11 +18,6 @@ router = APIRouter()
 
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 WATCH_HOSTS = {"www.youtube.com", "youtube.com", "m.youtube.com"}
-
-class OAuthExchangeRequest(BaseModel):
-    code: str
-    redirect_uri: str
-
 
 
 def extract_video_id(url: str) -> str:
@@ -149,25 +142,3 @@ async def get_job_results(job_id: str):
         result=build_result(job),
         warnings=job.warnings or [],
     )
-
-@router.get("/auth/notion/config")
-async def get_notion_oauth_config():
-    settings = get_settings()
-    return {"client_id": settings.notion_oauth_client_id or ""}
-
-@router.post("/auth/notion/token")
-async def exchange_notion_oauth_code(payload: OAuthExchangeRequest):
-    settings = get_settings()
-    if not payload.redirect_uri.endswith(".chromiumapp.org/notion"):
-        raise HTTPException(status_code=422, detail="Invalid redirect URI.")
-    
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            "https://api.notion.com/v1/oauth/token",
-            auth=(settings.notion_oauth_client_id, settings.notion_oauth_client_secret),
-            json={"grant_type": "authorization_code", "code": payload.code, "redirect_uri": payload.redirect_uri},
-        )
-    if res.status_code != 200:
-        raise HTTPException(status_code=res.status_code, detail="Notion OAuth exchange failed.")
-    data = res.json()
-    return {"access_token": data.get("access_token"), "workspace_name": data.get("workspace_name")}

@@ -48,8 +48,29 @@ async def fetch_transcript_and_metadata(
     loop = asyncio.get_running_loop()
 
     def _sync_fetch():
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        return transcript
+        if hasattr(YouTubeTranscriptApi, "get_transcript"):
+            return YouTubeTranscriptApi.get_transcript(video_id)
+
+        api = YouTubeTranscriptApi()
+        try:
+            transcript_obj = api.list(video_id).find_transcript(["en", "en-US", "en-GB"])
+            fetched = transcript_obj.fetch()
+            return (
+                fetched.to_raw_data()
+                if hasattr(fetched, "to_raw_data")
+                else [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
+            )
+        except Exception:
+            # Fall back to any available transcript in the list
+            available = api.list(video_id)
+            for t in available:
+                fetched = t.fetch()
+                return (
+                    fetched.to_raw_data()
+                    if hasattr(fetched, "to_raw_data")
+                    else [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
+                )
+            raise NoTranscriptFound(video_id, ["en"], None)
 
     transcript_list = await loop.run_in_executor(None, _sync_fetch)
     if not transcript_list:

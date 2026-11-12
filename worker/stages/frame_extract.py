@@ -23,7 +23,7 @@ def extract_direct_stream_url(youtube_url: str) -> Optional[str]:
         import yt_dlp
 
         ydl_opts = {
-            "format": "best[height<=720][ext=mp4]/best[height<=720]/best[ext=mp4]/best",
+            "format": "bestvideo[height<=720]/bestvideo/best[height<=720]/best",
             "quiet": True,
             "no_warnings": True,
         }
@@ -45,13 +45,23 @@ def capture_frame_with_ffmpeg(
     stream_url: str,
     timestamp_sec: int,
     output_path: str,
-    timeout_sec: int = 15,
+    timeout_sec: int = 30,
 ) -> bool:
     """Invokes ffmpeg to seek directly over HTTP and capture a single high quality frame."""
     ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
     cmd = [
         ffmpeg_bin,
         "-y",
+        "-reconnect",
+        "1",
+        "-reconnect_at_eof",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_delay_max",
+        "5",
+        "-headers",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n",
         "-ss",
         str(timestamp_sec),
         "-i",
@@ -73,8 +83,9 @@ def capture_frame_with_ffmpeg(
         )
         if res.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             return True
+        stderr_tail = res.stderr.decode("utf-8", errors="ignore")[-300:].strip()
         logger.warning(
-            f"ffmpeg exited with code {res.returncode} for timestamp {timestamp_sec}: {res.stderr.decode('utf-8', errors='ignore')[:200]}"
+            f"ffmpeg exited with code {res.returncode} for timestamp {timestamp_sec}: {stderr_tail}"
         )
     except Exception as e:
         logger.warning(f"ffmpeg capture timed out or failed for timestamp {timestamp_sec}: {e}")

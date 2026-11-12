@@ -45,6 +45,8 @@ def test_format_transcript_lines():
         {"text": "Here is the agenda", "start": 65.0, "duration": 3.0},
     ]
     formatted = format_transcript_lines(raw)
+    assert "[5s]" in formatted
+    assert "[65s]" in formatted
     assert "[00:05] Welcome to class" in formatted
     assert "[01:05] Here is the agenda" in formatted
 
@@ -204,4 +206,67 @@ async def test_process_summarize_stage_rate_limit_429_reraised():
             )
 
         assert "429" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_process_summarize_stage_timestamp_correction_and_clamping():
+    """Verify summarize stage auto corrects concatenated timestamps and discards out of bounds frames."""
+    async with get_test_db_session() as db_session:
+        job = Job(
+            video_id="duration_guard_vid",
+            youtube_url="https://www.youtube.com/watch?v=duration_guard_vid",
+            duration_sec=784,
+            notion_token="secret_key",
+            status=JobStatus.SUMMARIZING.value,
+            raw_transcript=[{"text": "Sample text", "start": 0.0, "duration": 5.0}],
+        )
+        db_session.add(job)
+        await db_session.commit()
+
+        task = StageMessage(
+            job_id=job.id,
+            stage="summarize",
+            video_id=job.video_id,
+            youtube_url=job.youtube_url,
+            notion_token=job.notion_token,
+        )
+
+        mock_adapter = MagicMock()
+        mock_adapter.synthesize = AsyncMock(
+            return_value=SynthesisResult(
+                overview="Sample video overview.",
+                sections=[SummarySection(section_title="Intro", bullet_points=["Note 1"])],
+                key_moments=[
+                    SlideKeyMoment(timestamp_sec=45, caption="Normal slide at 45 seconds."),
+                    # 822 corresponds to 08:22 -> 8*60+22 = 502s, should be corrected
+                    SlideKeyMoment(timestamp_sec=822, caption="Slide with concatenated digits 822."),
+                    # 9999 exceeds video duration and cannot be converted to <= 784s
+                    SlideKeyMoment(timestamp_sec=9999, caption="Slide far beyond end of video."),
+                ],
+            )
+        )
+
+        mock_limiter = MagicMock()
+        mock_limiter.acquire = AsyncMock(return_value=True)
+        mock_publish = AsyncMock()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("worker.stages.summarize.publish_stage_task", mock_publish)
+            success = await process_summarize_stage(
+                task=task,
+                session=db_session,
+                rate_limiter=mock_limiter,
+                llm_adapter=mock_adapter,
+            )
+
+        assert success is True
+
+        result = await db_session.execute(select(Job).where(Job.id == job.id))
+        updated_job = result.scalar_one()
+
+        moments = updated_job.llm_summary["key_moments"]
+        assert len(moments) == 2
+        assert moments[0]["timestamp_sec"] == 45
+        assert moments[1]["timestamp_sec"] == 502
+
 

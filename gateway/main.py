@@ -2,11 +2,13 @@
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import redis.asyncio as aioredis
@@ -114,8 +116,12 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
 
 app.include_router(router)
+app.include_router(auth_router)
 
-app.include_router(auth_router) 
+# Mount static frame storage directory
+frame_storage_dir = get_settings().frame_storage_dir
+os.makedirs(frame_storage_dir, exist_ok=True)
+app.mount("/frames", StaticFiles(directory=frame_storage_dir), name="frames") 
 
 async def check_postgres() -> None:
     async with get_engine().connect() as conn:

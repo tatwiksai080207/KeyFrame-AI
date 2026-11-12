@@ -42,13 +42,14 @@ class SynthesisResult(BaseModel):
 
 
 SYNTHESIS_SYSTEM_INSTRUCTION = """You are a senior technical note-taking and video analysis AI.
-Your goal is to transform YouTube video lecture/tutorial transcripts into structured, publication-ready study notes for Notion.
+Your goal is to transform YouTube video lecture or tutorial transcripts into structured, publication-ready study notes for Notion.
 
 Requirements:
 1. Provide an executive summary overview of the presentation.
 2. Structure the core content into logical sections with clear, informative bullet points.
-3. Identify all timestamps (in integer seconds) where visually important slides, architectural diagrams, whiteboards, or code snippets are discussed.
+3. Identify all timestamps (in integer elapsed seconds) where visually important slides, architectural diagrams, whiteboards, or code snippets are discussed.
 4. Constraint B Requirement: Every flagged timestamp MUST have an explanatory caption explaining both WHAT diagram/slide is shown and WHY it was flagged.
+5. Timestamp format: The transcript displays timestamps as `[{start_sec}s] [MM:SS]`. Each `timestamp_sec` in your output MUST be the exact integer seconds taken directly from the `{start_sec}s` marker. Never output concatenated minute and second numbers (for example, 08:22 is 502 seconds, never 822; 10:00 is 600 seconds, never 1000). All timestamps must be within the actual video duration.
 
 Output format: You MUST return strictly valid JSON matching this schema:
 {
@@ -77,6 +78,7 @@ class BaseLLMAdapter(ABC):
         self,
         transcript_text: str,
         video_title: Optional[str] = None,
+        duration_sec: Optional[int] = None,
     ) -> SynthesisResult:
         """Synthesizes structured notes and slide key moments from transcript text."""
         pass

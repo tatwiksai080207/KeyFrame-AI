@@ -48,7 +48,7 @@ class Settings(BaseSettings):
         validation_alias="OPENAI_API_KEY",
     )
     llm_model: str = Field(
-        default="gemini-1.5-flash",
+        default="gemini-3.5-flash",
         validation_alias="LLM_MODEL",
     )
     llm_rate_limit_rpm: int = Field(
@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     frame_storage_dir: str = Field(
         default="./frames",
         validation_alias="FRAME_STORAGE_DIR",
+    )
+    public_base_url: Optional[str] = Field(
+        default=None,
+        validation_alias="PUBLIC_BASE_URL",
     )
 
     # Constraints and Fault Tolerance

@@ -26,7 +26,7 @@ def format_transcript_lines(snippets: List[Dict[str, Any]]) -> str:
         start_sec = int(item.get("start", 0))
         minutes = start_sec // 60
         seconds = start_sec % 60
-        timestamp_str = f"[{minutes:02d}:{seconds:02d}]"
+        timestamp_str = f"[{start_sec}s] [{minutes:02d}:{seconds:02d}]"
         text = item.get("text", "").strip()
         if text:
             formatted_lines.append(f"{timestamp_str} {text}")
@@ -143,6 +143,7 @@ async def process_summarize_stage(
             chunk_res = await adapter.synthesize(
                 transcript_text=chunk,
                 video_title=job.video_title,
+                duration_sec=job.duration_sec,
             )
             partial_results.append(chunk_res)
 
@@ -163,11 +164,37 @@ async def process_summarize_stage(
         await session.commit()
         return False
 
-    # Enforce Constraint B: verify all key moments have non-empty explanatory captions
+    # Enforce Constraint B: verify all key moments have non-empty explanatory captions and valid timestamps
     verified_key_moments = []
+    max_duration = job.duration_sec or 1200
     for moment in final_synthesis.key_moments:
-        if moment.caption and moment.caption.strip():
-            verified_key_moments.append(moment.model_dump())
+        if not moment.caption or not moment.caption.strip():
+            continue
+
+        ts = moment.timestamp_sec
+
+        # Auto-correct concatenated MMSS timestamps (e.g. 822 for 08:22 -> 502s)
+        if ts > max_duration and ts >= 100:
+            m = ts // 100
+            s = ts % 100
+            if s < 60:
+                corrected = m * 60 + s
+                if corrected <= max_duration:
+                    logger.info(
+                        f"Corrected concatenated timestamp {ts} to {corrected}s ({m:02d}:{s:02d})"
+                    )
+                    ts = corrected
+
+        # Discard any keyframe timestamps exceeding the video duration
+        if ts > max_duration or ts < 0:
+            logger.warning(
+                f"Discarding key moment at timestamp {ts} exceeding video duration {max_duration}s"
+            )
+            continue
+
+        moment_dict = moment.model_dump()
+        moment_dict["timestamp_sec"] = ts
+        verified_key_moments.append(moment_dict)
 
     # Store synthesis outputs in database
     job.llm_summary = {
