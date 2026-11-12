@@ -1,31 +1,22 @@
 .keyframe-ai-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   height: 32px;
-  padding: 0 12px;
+  padding: 0 14px;
   margin: 0 6px;
   border: none;
   border-radius: 16px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: #2563eb;
   color: #fff;
-  font: 600 13px Roboto, Arial, sans-serif;
+  font: 500 13px Roboto, Arial, sans-serif;
   white-space: nowrap;
   vertical-align: middle;
   cursor: pointer;
-  transition: background 0.2s, transform 0.1s;
 }
 
-.keyframe-ai-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
-  transform: translateY(-1px);
-}
+.keyframe-ai-btn:hover:not(:disabled) { background: #1d4ed8; }
+.keyframe-ai-btn:disabled { cursor: default; opacity: 0.85; }
 
-.keyframe-ai-btn:disabled {
-  cursor: default;
-  opacity: 0.85;
-}
-
-/* Declared last so they override the gradient above. */
-.keyframe-ai-btn--ok { background: #10b981; }
-.keyframe-ai-btn--error { background: #ef4444; }
+/* Declared last so they override the blue above. */
+.keyframe-ai-btn--ok { background: #16a34a; }
+.keyframe-ai-btn--error { background: #dc2626; }

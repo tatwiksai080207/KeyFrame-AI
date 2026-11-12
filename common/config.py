@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     )
 
     # Notion Settings
+    notion_oauth_client_id: Optional[str] = Field(
+        default=None,
+        validation_alias="NOTION_OAUTH_CLIENT_ID",
+    )
+    notion_oauth_client_secret: Optional[str] = Field(
+        default=None,
+        validation_alias="NOTION_OAUTH_CLIENT_SECRET",
+    )
     notion_default_parent_page_id: Optional[str] = Field(
         default=None,
         validation_alias="NOTION_DEFAULT_PARENT_PAGE_ID",
