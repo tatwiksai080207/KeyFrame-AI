@@ -69,6 +69,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
+    deploy:
+      replicas: 2
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/notes_agent
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/

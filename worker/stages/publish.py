@@ -254,13 +254,37 @@ async def process_publish_stage(
             logger.warning(f"Notion API rate limited (429) for job {task.job_id}: {e}")
             raise
 
-        logger.error(f"Failed to publish Notion page for job {task.job_id}: {e}")
-        job.transition_to(
-            JobStatus.FAILED,
-            error={"code": "NOTION_PUBLISH_FAILED", "message": f"Notion API call failed: {str(e)}"},
-        )
-        await session.commit()
-        return False
+        page_created = False
+        if "could not find page" in error_str or "validation_error" in error_str:
+            try:
+                db_payload = {
+                    "parent": {"database_id": clean_parent_id},
+                    "properties": {
+                        "Name": {
+                            "title": [
+                                {
+                                    "type": "text",
+                                    "text": {"content": job.video_title or f"Study Notes: {task.video_id}"},
+                                }
+                            ]
+                        }
+                    },
+                    "children": children_blocks,
+                }
+                page_response = await notion.pages.create(**db_payload)
+                page_url = page_response.get("url", f"https://notion.so/{clean_parent_id}")
+                page_created = True
+            except Exception as db_err:
+                logger.warning(f"Database parent attempt failed: {db_err}")
+
+        if not page_created:
+            logger.error(f"Failed to publish Notion page for job {task.job_id}: {e}")
+            job.transition_to(
+                JobStatus.FAILED,
+                error={"code": "NOTION_PUBLISH_FAILED", "message": f"Notion API call failed: {str(e)}"},
+            )
+            await session.commit()
+            return False
 
     # Save created Notion URL
     job.notion_page_url = page_url
