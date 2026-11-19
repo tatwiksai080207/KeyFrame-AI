@@ -1,22 +1,140 @@
+/* KeyFrame AI: Native YouTube Player Toolbar Button */
+
 .keyframe-ai-btn {
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 14px;
-  margin: 0 6px;
-  border: none;
-  border-radius: 16px;
-  background: #2563eb;
-  color: #fff;
-  font: 500 13px Roboto, Arial, sans-serif;
-  white-space: nowrap;
-  vertical-align: middle;
-  cursor: pointer;
+  position: relative !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 48px !important;
+  height: 48px !important;
+  min-width: 48px !important;
+  max-width: 48px !important;
+  min-height: 48px !important;
+  max-height: 48px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  color: #ffffff !important;
+  cursor: pointer !important;
+  outline: none !important;
+  vertical-align: top !important;
+  text-align: center !important;
+  line-height: 0 !important;
+  overflow: visible !important;
+  opacity: 0.9 !important;
+  box-sizing: border-box !important;
+  align-self: center !important;
+  flex-shrink: 0 !important;
+  transition: opacity 0.15s ease !important;
 }
 
-.keyframe-ai-btn:hover:not(:disabled) { background: #1d4ed8; }
-.keyframe-ai-btn:disabled { cursor: default; opacity: 0.85; }
+.keyframe-ai-btn:hover {
+  opacity: 1 !important;
+}
 
-/* Declared last so they override the blue above. */
-.keyframe-ai-btn--ok { background: #16a34a; }
-.keyframe-ai-btn--error { background: #dc2626; }
+/* Centered 24x24 SVG inside the 48x48 button */
+.keyframe-ai-svg {
+  display: block !important;
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  max-width: 24px !important;
+  max-height: 24px !important;
+  margin: auto !important;
+  padding: 0 !important;
+  pointer-events: none !important;
+  fill: currentColor !important;
+  overflow: visible !important;
+}
+
+/* Visibility states centered at (12, 12) */
+.keyframe-ai-state {
+  display: none;
+  transform-origin: 12px 12px;
+}
+
+.keyframe-ai-state--idle {
+  display: block;
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.keyframe-ai-btn:hover .keyframe-ai-state--idle {
+  transform: scale(1.08);
+}
+
+.keyframe-ai-btn:active .keyframe-ai-state--idle {
+  transform: scale(0.92);
+}
+
+.keyframe-ai-btn--busy .keyframe-ai-state--idle {
+  display: none;
+}
+.keyframe-ai-btn--busy .keyframe-ai-state--busy {
+  display: block;
+  animation: keyframe-ai-spin 0.8s linear infinite;
+}
+
+.keyframe-ai-btn--ok .keyframe-ai-state--idle {
+  display: none;
+}
+.keyframe-ai-btn--ok .keyframe-ai-state--ok {
+  display: block;
+  animation: keyframe-ai-pop 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.keyframe-ai-btn--error .keyframe-ai-state--idle {
+  display: none;
+}
+.keyframe-ai-btn--error .keyframe-ai-state--error {
+  display: block;
+  animation: keyframe-ai-shake 0.35s ease;
+}
+
+/* Native YouTube Style Floating Tooltip */
+.keyframe-ai-tooltip {
+  position: absolute !important;
+  bottom: 56px !important;
+  left: 50% !important;
+  transform: translateX(-50%) translateY(4px) !important;
+  background: rgba(28, 28, 28, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  color: #ffffff !important;
+  font-family: "Roboto", "YouTube Noto", "Segoe UI", Arial, sans-serif !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.2px !important;
+  line-height: 14px !important;
+  padding: 5px 9px !important;
+  border-radius: 6px !important;
+  white-space: nowrap !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transition: opacity 140ms ease, transform 180ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+  z-index: 9999 !important;
+}
+
+.keyframe-ai-btn:hover .keyframe-ai-tooltip {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateX(-50%) translateY(0) !important;
+}
+
+@keyframes keyframe-ai-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes keyframe-ai-pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes keyframe-ai-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}

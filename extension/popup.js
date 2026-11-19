@@ -10,11 +10,11 @@ const STAGE_ORDER = [
 ];
 const DONE_INDEX = STAGE_ORDER.length; 
 const STAGE_LABELS = {
-  QUEUED: "Waiting in line",
-  TRANSCRIBING: "Getting the transcript",
-  SUMMARIZING: "Writing the summary",
+  QUEUED: "Waiting in queue",
+  TRANSCRIBING: "Extracting transcript",
+  SUMMARIZING: "Writing study summary",
   EXTRACTING_FRAMES: "Capturing key frames",
-  PUBLISHING: "Creating the Notion page",
+  PUBLISHING: "Creating Notion page",
 };
 
 const ERROR_MESSAGES = {
@@ -129,7 +129,24 @@ function render(status) {
     ? "Stopped"
     : finished
       ? "Done"
-      : `${progress}% - ${STAGE_LABELS[state] || "Working"}`;
+      : `${progress}%`;
+
+  const badge = $("job-badge");
+  if (badge) {
+    if (failed) {
+      badge.textContent = "Stopped";
+      badge.className = "state-badge badge--error";
+    } else if (state === "COMPLETED_WITH_WARNINGS") {
+      badge.textContent = "Warnings";
+      badge.className = "state-badge badge--warning";
+    } else if (finished) {
+      badge.textContent = "Done";
+      badge.className = "state-badge badge--success";
+    } else {
+      badge.textContent = "Processing";
+      badge.className = "state-badge";
+    }
+  }
 
   renderStages(state);
   renderLink(status);
@@ -150,17 +167,102 @@ function showConnectionProblem(message) {
   box.hidden = !message;
 }
 
+function renderJobsList(jobs, activeJobId) {
+  const section = $("jobs-section");
+  const list = $("jobs-list");
+  const countBadge = $("jobs-count-badge");
+
+  if (!jobs || jobs.length <= 1) {
+    if (section) section.hidden = true;
+    return;
+  }
+
+  if (section) section.hidden = false;
+  if (countBadge) {
+    countBadge.textContent = `${jobs.length} videos`;
+  }
+
+  list.replaceChildren(
+    ...jobs.map((job) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "job-chip";
+      chip.setAttribute("role", "tab");
+      const isActive = job.job_id === activeJobId;
+      if (isActive) {
+        chip.classList.add("is-active");
+        chip.setAttribute("aria-selected", "true");
+      } else {
+        chip.setAttribute("aria-selected", "false");
+      }
+
+      const dot = document.createElement("span");
+      dot.className = "job-chip-dot";
+      let statusDesc = "Queued";
+
+      if (isFinished(job.status)) {
+        dot.classList.add("dot--done");
+        statusDesc = "Done";
+      } else if (isFailed(job.status)) {
+        dot.classList.add("dot--error");
+        statusDesc = "Stopped";
+      } else {
+        dot.classList.add("dot--running");
+        const stageLabel = STAGE_LABELS[job.status] || "Processing";
+        statusDesc = job.progress ? `${stageLabel} · ${job.progress}%` : stageLabel;
+      }
+
+      const body = document.createElement("span");
+      body.className = "job-chip-body";
+
+      const title = document.createElement("span");
+      title.className = "job-chip-title";
+      title.textContent = job.video_title || "YouTube Video";
+
+      const statusEl = document.createElement("span");
+      statusEl.className = "job-chip-status";
+      statusEl.textContent = statusDesc;
+
+      body.appendChild(title);
+      body.appendChild(statusEl);
+
+      chip.appendChild(dot);
+      chip.appendChild(body);
+
+      chip.addEventListener("click", async () => {
+        if (job.job_id === activeJobId) return;
+        render(job);
+        renderJobsList(jobs, job.job_id);
+        try {
+          await chrome.runtime.sendMessage({
+            type: "SELECT_JOB",
+            job_id: job.job_id,
+          });
+        } catch (err) {
+          // ignore
+        }
+        refresh();
+      });
+
+      return chip;
+    }),
+  );
+}
+
 async function refresh() {
   try {
     const response = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
     if (response && response.success) {
       showConnectionProblem("");
-      render(response.status);
-      if (
-        !response.status ||
-        isFinished(response.status.status) ||
-        isFailed(response.status.status)
-      ) {
+      const jobs = response.jobs || [];
+      const activeStatus = response.status;
+      render(activeStatus);
+      renderJobsList(jobs, activeStatus ? activeStatus.job_id : null);
+
+      const anyRunning = jobs.some(
+        (j) => !isFinished(j.status) && !isFailed(j.status),
+      );
+      if (!anyRunning) {
         stopPolling();
       }
     } else {
@@ -193,18 +295,30 @@ async function renderConnection() {
     notion_workspace: "",
   });
   const connected = Boolean(notion_token);
-  $("connection-status").textContent = connected
-    ? `Connected to ${notion_workspace || "Notion"}`
-    : "Notion is not connected.";
-  $("connect-notion").textContent = connected
-    ? "Reconnect Notion"
-    : "Connect Notion";
+  const statusEl = $("connection-status");
+  const btn = $("connect-notion");
+  const widget = $("connect");
+
+  if (statusEl) {
+    statusEl.textContent = connected
+      ? (notion_workspace || "Connected")
+      : "Not connected";
+  }
+  if (btn) {
+    btn.textContent = connected ? "Change" : "Connect";
+  }
+  if (widget) {
+    widget.classList.toggle("is-connected", connected);
+    widget.title = connected
+      ? `Connected to ${notion_workspace || "Notion"}`
+      : "Notion account not connected";
+  }
 }
 
 async function connectNotion() {
   const button = $("connect-notion");
   button.disabled = true;
-  button.textContent = "Waiting for Notion...";
+  button.textContent = "Connecting...";
   try {
     const response = await chrome.runtime.sendMessage({
       type: "CONNECT_NOTION",
@@ -215,7 +329,7 @@ async function connectNotion() {
         : (response && response.error) || "Could not connect to Notion.",
     );
   } catch (err) {
-    // The popup closes while Notion's window is open; the background keeps going.
+    // Popup closes during Notion OAuth; background continues
   }
   button.disabled = false;
   renderConnection();
@@ -243,6 +357,7 @@ async function saveSettings() {
   } catch (err) {
     status.textContent =
       "Enter a valid server address, e.g. http://localhost:8000";
+    status.style.color = "#dc2626";
     return;
   }
 
@@ -253,7 +368,11 @@ async function saveSettings() {
   await chrome.storage.local.set(updates);
   $("token-input").value = "";
   await loadSettings();
-  status.textContent = "Saved.";
+  status.textContent = "Saved";
+  status.style.color = "#16a34a";
+  setTimeout(() => {
+    if (status.textContent === "Saved") status.textContent = "";
+  }, 2500);
 }
 
 async function init() {
@@ -263,14 +382,42 @@ async function init() {
   $("connect-notion").addEventListener("click", connectNotion);
   renderConnection();
 
-  const { active_job_status } =
-    await chrome.storage.local.get("active_job_status");
+  const clearBtn = $("clear-finished-btn");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", async () => {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "CLEAR_FINISHED_JOBS",
+        });
+        if (response && response.success) {
+          render(response.status);
+          renderJobsList(response.jobs, response.status ? response.status.job_id : null);
+        }
+      } catch (err) {
+        // ignore
+      }
+    });
+  }
+
+  const { active_job_status, jobs_list, active_job_id } =
+    await chrome.storage.local.get({
+      active_job_status: null,
+      jobs_list: [],
+      active_job_id: null,
+    });
   render(active_job_status || null);
+  renderJobsList(jobs_list, active_job_id);
+
   await refresh();
+
+  const hasRunning = (jobs_list || []).some(
+    (j) => !isFinished(j.status) && !isFailed(j.status),
+  );
   if (
-    active_job_status &&
-    !isFinished(active_job_status.status) &&
-    !isFailed(active_job_status.status)
+    hasRunning ||
+    (active_job_status &&
+      !isFinished(active_job_status.status) &&
+      !isFailed(active_job_status.status))
   ) {
     startPolling();
   }
@@ -278,7 +425,7 @@ async function init() {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.notion_token || changes.notion_workspace) renderConnection();
-    if (changes.active_job_id) {
+    if (changes.active_job_id || changes.jobs_list) {
       refresh();
       startPolling();
     }

@@ -51,6 +51,7 @@ async def create_job(payload: JobCreateRequest, response: Response):
         job = Job(
             video_id=video_id,
             youtube_url=payload.youtube_url,
+            video_title=payload.video_title,
             notion_token=payload.notion_token,
             notion_parent_id=parent_id,
         )

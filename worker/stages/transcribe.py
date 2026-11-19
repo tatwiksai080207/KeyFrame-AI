@@ -169,7 +169,10 @@ async def process_transcribe_stage(
     # Store transcript, duration, title, and description
     job.raw_transcript = transcript
     job.duration_sec = duration_sec
-    job.video_title = video_title
+    has_cyrillic = any(ord(c) > 127 for c in (video_title or ""))
+    has_client_latin = bool(job.video_title and any(ord(c) <= 127 for c in job.video_title))
+    if not (has_cyrillic and has_client_latin):
+        job.video_title = video_title or job.video_title
     job.video_description = video_description
 
     # Transition to SUMMARIZING stage

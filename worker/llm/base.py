@@ -37,6 +37,10 @@ class SynthesisResult(BaseModel):
         default="Technical Video",
         description="Detected video category e.g. Technical Tutorial, Academic Lecture, Architecture Walkthrough, Product Demo.",
     )
+    english_title: Optional[str] = Field(
+        default=None,
+        description="Clean English title for the video. If the video title or topic is in Russian, Cyrillic, or any non-English language, translate it into natural English.",
+    )
     overview: str = Field(min_length=10, description="Executive summary overview of the video.")
     key_resources: List[str] = Field(
         default_factory=list,
@@ -81,6 +85,7 @@ Requirements:
 Output format: You MUST return strictly valid JSON matching this schema:
 {
   "video_type": "Technical Tutorial | Academic Lecture | Architecture Walkthrough | Product Demo | Conference Talk",
+  "english_title": "Translated or original English title",
   "overview": "High level summary...",
   "key_resources": [
     "https://github.com/... - Library description",

@@ -16,6 +16,9 @@ class JobCreateRequest(BaseModel):
     notion_parent_id: Optional[str] = Field(
         default=None, description="Notion parent page / database ID"
     )
+    video_title: Optional[str] = Field(
+        default=None, description="Optional video title captured from client"
+    )
 
     @field_validator("youtube_url")
     @classmethod

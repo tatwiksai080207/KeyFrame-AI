@@ -95,9 +95,11 @@ def merge_synthesis_results(results: List[SynthesisResult]) -> SynthesisResult:
                 all_resources.append(res_item)
 
     first_video_type = results[0].video_type if results and hasattr(results[0], "video_type") else "Technical Video"
+    first_title = next((r.english_title for r in results if getattr(r, "english_title", None)), None)
 
     return SynthesisResult(
         video_type=first_video_type,
+        english_title=first_title,
         overview=merged_overview,
         key_resources=all_resources,
         sections=merged_sections,
@@ -161,6 +163,8 @@ async def process_summarize_stage(
             partial_results.append(chunk_res)
 
         final_synthesis = merge_synthesis_results(partial_results)
+        if getattr(final_synthesis, "english_title", None):
+            job.video_title = final_synthesis.english_title
 
     except Exception as e:
         error_msg = str(e).lower()

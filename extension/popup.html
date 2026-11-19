@@ -3,53 +3,179 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KeyFrame-AI</title>
+  <title>KeyFrame AI</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <header>
-    <img src="icons/icon48.png" alt="" width="24" height="24" />
-    <h1>KeyFrame-AI</h1>
-  </header>
+  <div class="popup-wrapper">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <img class="brand-logo" src="icons/icon48.png" alt="KeyFrame AI logo" width="18" height="18" />
+        <span class="brand-name">KeyFrame AI</span>
+      </div>
 
-  <p id="conn-error" class="banner error" hidden></p>
-  <section id="connect">
-    <p id="connection-status" class="hint">Notion is not connected.</p>
-    <button id="connect-notion" class="btn" type="button">Connect Notion</button>
-  </section>
+      <!-- Notion Connection Status Pill -->
+      <div id="connect" class="notion-badge">
+        <span class="status-dot"></span>
+        <span id="connection-status" class="status-text">Not connected</span>
+        <button id="connect-notion" class="connect-btn" type="button">Connect</button>
+      </div>
+    </header>
 
-  <section id="empty-state">
-    <p class="empty-title">No notes in progress</p>
-    <p class="hint">Open a YouTube video and click Take Notes below the player.</p>
-  </section>
+    <div id="conn-error" class="alert-box error" hidden role="alert"></div>
 
-  <section id="job-view" hidden>
-    <h2 id="video-title">Preparing your video...</h2>
-    <div class="progress"><div id="progress-bar" class="progress-bar"></div></div>
-    <p id="progress-text" class="progress-text">0%</p>
+    <!-- Jobs Queue Switcher -->
+    <section id="jobs-section" class="jobs-section" hidden>
+      <div class="jobs-section-header">
+        <div class="jobs-section-title-wrap">
+          <span class="jobs-section-title">Submitted Videos</span>
+          <span id="jobs-count-badge" class="jobs-count-pill">0</span>
+        </div>
+        <button id="clear-finished-btn" class="clear-jobs-btn" type="button" title="Clear completed jobs">Clear done</button>
+      </div>
+      <div id="jobs-list" class="jobs-chip-list" role="tablist" aria-label="Submitted video jobs"></div>
+    </section>
 
-    <ol id="stages" class="stages">
-      <li>Queued</li>
-      <li>Transcribing</li>
-      <li>Summarizing</li>
-      <li>Extracting Frames</li>
-      <li>Publishing</li>
-      <li>Done</li>
-    </ol>
+    <!-- Empty State -->
+    <section id="empty-state" class="empty-view">
+      <div class="empty-icon-box">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <polyline points="14 2 14 8 20 8"></polyline>
+          <line x1="16" y1="13" x2="8" y2="13"></line>
+          <line x1="16" y1="17" x2="8" y2="17"></line>
+          <line x1="10" y1="9" x2="8" y2="9"></line>
+        </svg>
+      </div>
+      <h2 class="empty-heading">No notes in progress</h2>
+      <p class="empty-copy">Open a YouTube video and click the notes icon on the player toolbar to generate structured study notes.</p>
+      
+      <div class="features-list">
+        <div class="feature-row">
+          <span class="feature-bullet">•</span>
+          <span>Captures authentic video slide keyframes</span>
+        </div>
+        <div class="feature-row">
+          <span class="feature-bullet">•</span>
+          <span>Mines resource links from video description</span>
+        </div>
+        <div class="feature-row">
+          <span class="feature-bullet">•</span>
+          <span>Formats directly into your Notion workspace</span>
+        </div>
+      </div>
+    </section>
 
-    <div id="banner" class="banner" hidden></div>
-    <a id="notion-link" class="btn" href="#" target="_blank" rel="noopener noreferrer" hidden>View in Notion</a>
-  </section>
+    <!-- Active Job Processing View -->
+    <section id="job-view" class="job-container" hidden>
+      <div class="job-header-row">
+        <span id="job-badge" class="state-badge">Processing</span>
+        <span id="progress-text" class="progress-label">0%</span>
+      </div>
 
-  <details class="settings">
-    <summary>Settings</summary>
-    <label for="token-input">Notion integration token</label>
-    <input id="token-input" type="password" placeholder="secret_..." autocomplete="off" />
-    <label for="api-input">Server address</label>
-    <input id="api-input" type="url" />
-    <button id="save-settings" type="button">Save</button>
-    <p id="settings-status" class="hint"></p>
-  </details>
+      <h2 id="video-title" class="video-heading">Preparing your video...</h2>
+
+      <!-- Progress Track -->
+      <div class="progress-rail" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+
+      <!-- Vertical Stage Stepper -->
+      <ol id="stages" class="step-list">
+        <li class="step-item" data-stage="QUEUED">
+          <div class="step-marker">
+            <span class="step-circle"></span>
+          </div>
+          <div class="step-text">
+            <span class="step-title">Queued</span>
+            <span class="step-desc">Accepted and waiting in message queue</span>
+          </div>
+        </li>
+        <li class="step-item" data-stage="TRANSCRIBING">
+          <div class="step-marker">
+            <span class="step-circle"></span>
+          </div>
+          <div class="step-text">
+            <span class="step-title">Transcribing</span>
+            <span class="step-desc">Extracting transcript and validating length</span>
+          </div>
+        </li>
+        <li class="step-item" data-stage="SUMMARIZING">
+          <div class="step-marker">
+            <span class="step-circle"></span>
+          </div>
+          <div class="step-text">
+            <span class="step-title">Summarizing</span>
+            <span class="step-desc">Synthesizing notes and slide timestamps</span>
+          </div>
+        </li>
+        <li class="step-item" data-stage="EXTRACTING_FRAMES">
+          <div class="step-marker">
+            <span class="step-circle"></span>
+          </div>
+          <div class="step-text">
+            <span class="step-title">Extracting Frames</span>
+            <span class="step-desc">Capturing and deduplicating video slides</span>
+          </div>
+        </li>
+        <li class="step-item" data-stage="PUBLISHING">
+          <div class="step-marker">
+            <span class="step-circle"></span>
+          </div>
+          <div class="step-text">
+            <span class="step-title">Publishing</span>
+            <span class="step-desc">Creating structured Notion page</span>
+          </div>
+        </li>
+        <li class="step-item" data-stage="DONE">
+          <div class="step-marker">
+            <span class="step-circle"></span>
+          </div>
+          <div class="step-text">
+            <span class="step-title">Done</span>
+            <span class="step-desc">Study notes published successfully</span>
+          </div>
+        </li>
+      </ol>
+
+      <div id="banner" class="alert-box" hidden role="status"></div>
+
+      <a id="notion-link" class="action-btn" href="#" target="_blank" rel="noopener noreferrer" hidden>
+        <span>View in Notion</span>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+          <polyline points="15 3 21 3 21 9"></polyline>
+          <line x1="10" y1="14" x2="21" y2="3"></line>
+        </svg>
+      </a>
+    </section>
+
+    <!-- Settings Accordion -->
+    <details class="settings-section">
+      <summary class="settings-header">
+        <span class="settings-title">Settings</span>
+        <svg class="arrow-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </summary>
+      <div class="settings-body">
+        <div class="input-field">
+          <label for="token-input" class="input-label">Notion Integration Token</label>
+          <input id="token-input" class="text-input" type="password" placeholder="secret_..." autocomplete="off" spellcheck="false" />
+          <span class="input-help">Saved locally in Chrome extension storage</span>
+        </div>
+        <div class="input-field">
+          <label for="api-input" class="input-label">Server Address</label>
+          <input id="api-input" class="text-input" type="url" placeholder="http://localhost:8000" spellcheck="false" />
+        </div>
+        <div class="settings-footer">
+          <button id="save-settings" class="save-btn" type="button">Save</button>
+          <span id="settings-status" class="save-feedback" aria-live="polite"></span>
+        </div>
+      </div>
+    </details>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>
