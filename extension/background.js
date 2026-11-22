@@ -14,6 +14,7 @@ async function getSettings() {
   return chrome.storage.local.get({
     api_base_url: DEFAULT_API_BASE,
     notion_token: "",
+    notion_parent_id: "",
   });
 }
 
@@ -42,18 +43,22 @@ async function apiRequest(path, options) {
 }
 
 async function startJob(videoId, title) {
-  const { notion_token } = await getSettings();
+  const { notion_token, notion_parent_id } = await getSettings();
   if (!notion_token) {
     throw new Error("Connect Notion first.");
+  }
+  const payload = {
+    youtube_url: `https://www.youtube.com/watch?v=${videoId}`,
+    notion_token,
+    video_title: title,
+  };
+  if (notion_parent_id && notion_parent_id.trim()) {
+    payload.notion_parent_id = notion_parent_id.trim();
   }
   const job = await apiRequest("/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      youtube_url: `https://www.youtube.com/watch?v=${videoId}`,
-      notion_token,
-      video_title: title,
-    }),
+    body: JSON.stringify(payload),
   });
 
   const newEntry = {

@@ -343,11 +343,13 @@ async function loadSettings() {
   const settings = await chrome.storage.local.get({
     api_base_url: "http://localhost:8000",
     notion_token: "",
+    notion_parent_id: "",
   });
   $("api-input").value = settings.api_base_url;
   $("token-input").placeholder = settings.notion_token
     ? "Saved - type to replace"
     : "secret_...";
+  $("parent-id-input").value = settings.notion_parent_id || "";
 }
 
 async function saveSettings() {
@@ -368,6 +370,8 @@ async function saveSettings() {
   const updates = { api_base_url: apiBase };
   const token = $("token-input").value.trim();
   if (token) updates.notion_token = token;
+  const parentId = $("parent-id-input").value.trim();
+  updates.notion_parent_id = parentId;
 
   await chrome.storage.local.set(updates);
   $("token-input").value = "";
