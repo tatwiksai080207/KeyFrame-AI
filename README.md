@@ -1,5 +1,8 @@
 # KeyFrame AI: Distributed Multimodal Video Note Taking Agent
 
+* **GitHub Repository:** [https://github.com/tatwiksai080207/KeyFrame-AI](https://github.com/tatwiksai080207/KeyFrame-AI)
+* **Branch:** `feat/worker-pipeline-llm`
+
 KeyFrame AI is an asynchronous, distributed system that transforms YouTube educational lectures and technical tutorials into structured Notion study notes. The generated notes combine executive summaries, technical specifications, resource reference tables, and real video frames of architecture diagrams and slides embedded directly within the text, each accompanied by detailed explanatory captions.
 
 The entire experience is driven from an unpacked Manifest V3 Google Chrome browser extension. The backend processes tasks asynchronously across a message queue backed worker pool equipped with distributed rate limiting, fault tolerance, and automatic crash recovery.
@@ -19,8 +22,9 @@ The entire experience is driven from an unpacked Manifest V3 Google Chrome brows
   * [1.8 Step 7: Connect Notion and Process Your First Video](#18-step-7-connect-notion-and-process-your-first-video)
 * [2. Executive Overview](#2-executive-overview)
 * [3. System Architecture](#3-system-architecture)
-  * [3.1 High Level Architectural Diagram](#31-high-level-architectural-diagram)
-  * [3.2 Core Runtime Components](#32-core-runtime-components)
+  * [3.1 High Level System Architecture](#31-high-level-system-architecture)
+  * [3.2 Worker Pipeline and External Service Architecture](#32-worker-pipeline-and-external-service-architecture)
+  * [3.3 Core Runtime Components](#33-core-runtime-components)
 * [4. End to End Pipeline Lifecycle](#4-end-to-end-pipeline-lifecycle)
   * [4.1 Stage Progression Sequence](#41-stage-progression-sequence)
   * [4.2 Stage 1: Transcript Extraction and Length Validation](#42-stage-1-transcript-extraction-and-length-validation)
@@ -203,51 +207,70 @@ KeyFrame AI bridges this gap through a distributed, automated architecture:
 
 The system is structured as four independently scalable tiers running in isolated processes and containers via Docker Compose.
 
-### 3.1 High Level Architectural Diagram
+### 3.1 High Level System Architecture
+
+The following diagram illustrates the decoupled multi tier architecture connecting the Chrome client extension, API Gateway, asynchronous RabbitMQ broker, distributed worker replicas, and persistent state stores:
 
 ```mermaid
 flowchart TD
-    subgraph Client ["Client Tier (Browser)"]
-        YT["YouTube Watch Page"] -->|Take Notes Click| CS["Content Script (content.js)"]
-        CS -->|START_JOB Event| BG["Background Worker (background.js)"]
-        BG -->|Poll Status| POP["Popup Stepper UI (popup.js)"]
+    subgraph Client ["1. Client Tier (Chrome Extension)"]
+        YT["YouTube Video Player"] -->|Click Take Notes| CS["Content Script (content.js)"]
+        CS -->|START_JOB Event| BG["Background Service Worker (background.js)"]
+        BG <-->|Poll Status & Results| POP["Extension Stepper UI (popup.js)"]
     end
 
-    subgraph Ingress ["API Gateway Tier (FastAPI)"]
+    subgraph Ingress ["2. API Gateway Tier (FastAPI)"]
         BG -->|POST /jobs| GW["API Gateway (port 8000)"]
-        BG -->|GET /jobs/{id}| GW
-        GW -->|Write Initial Job| PG[("PostgreSQL Database")]
-        GW -->|Publish Stage Task| MQ{{"RabbitMQ Broker"}}
+        GW -->|Persist Initial Job| DB[("PostgreSQL Database")]
+        GW -->|Enqueue Initial Task| MQ{{"RabbitMQ Direct Exchange"}}
     end
 
-    subgraph Broker ["Message Broker Tier (RabbitMQ)"]
-        MQ -->|Queue: jobs.transcribe| Q1["jobs.transcribe"]
-        MQ -->|Queue: jobs.summarize| Q2["jobs.summarize"]
-        MQ -->|Queue: jobs.frame_extract| Q3["jobs.frame_extract"]
-        MQ -->|Queue: jobs.publish| Q4["jobs.publish"]
-        MQ -.->|Exhausted Retries| DLQ["jobs.dlq (DLX)"]
+    subgraph Broker ["3. Asynchronous Message Broker Tier"]
+        MQ -->|Route Tasks| Queues["Durable Stage Queues\n(transcribe | summarize | frame_extract | publish)"]
+        Queues -.->|Max Retries Exhausted| DLQ["Dead Letter Queue (jobs.dlq)"]
     end
 
-    subgraph Workers ["Worker Pool Tier (Python 3.12)"]
-        W1["Worker Container 1"]
-        W2["Worker Container 2"]
-        Q1 --> W1 & W2
-        Q2 --> W1 & W2
-        Q3 --> W1 & W2
-        Q4 --> W1 & W2
+    subgraph WorkerTier ["4. Distributed Worker Pool Tier"]
+        Queues -->|Prefetch = 1| Workers["Worker Instances\n(worker-1, worker-2, ... worker-N)"]
     end
 
-    subgraph Coordination ["Coordination and External Services"]
-        W1 & W2 <-->|Rate Limit Tokens| RD[("Redis 7")]
-        W1 & W2 <-->|Update State and Progress| PG
-        W1 & W2 -->|Fetch Captions| YTAPI["YouTube Transcript API"]
-        W1 & W2 -->|Multimodal VLM| LLM["Google Gemini / OpenAI"]
-        W1 & W2 -->|Direct Stream Seek| FFMPEG["FFmpeg Binary"]
-        W1 & W2 -->|Create Structured Page| NOTION["Notion REST API"]
+    subgraph Storage ["5. Shared Storage & Distributed Cache"]
+        Workers <-->|Coordinate Rate Limits| RD[("Redis 7 Rate Limiter")]
+        Workers -->|Commit Progress & Outcomes| DB
     end
 ```
 
-### 3.2 Core Runtime Components
+### 3.2 Worker Pipeline and External Service Architecture
+
+Each worker pulls tasks from RabbitMQ and executes the four stage pipeline sequentially, coordinating with external AI APIs and tools:
+
+```mermaid
+flowchart LR
+    subgraph WorkerCore ["Worker Stage Execution Pipeline"]
+        direction TB
+        S1["Stage 1: Transcript Extraction\n(Duration Check <= 20 min)"]
+        S2["Stage 2: LLM Synthesis\n(Summary & Key Moments)"]
+        S3["Stage 3: Frame Curation\n(Quality & Completeness)"]
+        S4["Stage 4: Notion Assembly\n(In-Text Diagrams & Captions)"]
+        S1 --> S2 --> S3 --> S4
+    end
+
+    subgraph ExternalServices ["External Services & Tools"]
+        direction TB
+        E1["YouTube Transcript API"]
+        E2["Google Gemini / OpenAI"]
+        E3["FFmpeg Binary (Stream Seek)"]
+        E4["Notion REST API"]
+    end
+
+    S1 -->|Fetch Captions| E1
+    S2 -->|Structured Synthesis| E2
+    S3 -->|VLM Evaluation| E2
+    S3 -->|Direct Stream Capture| E3
+    S4 -->|Publish Notes Page| E4
+```
+
+### 3.3 Core Runtime Components
 
 1. **Browser Extension:** An unpacked Manifest V3 extension containing a content script, a background service worker, and a dark themed popup UI. The extension manages Notion OAuth tokens securely in `chrome.storage.local` and coordinates job submissions.
 2. **API Gateway:** An asynchronous FastAPI web service running on port 8000. It performs input validation, creates the initial job record in PostgreSQL, enqueues the first pipeline message onto RabbitMQ, and provides read only polling endpoints. It handles no heavy computation synchronously.
