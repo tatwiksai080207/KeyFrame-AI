@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,19 +14,116 @@ from common.models import Job, JobStatus
 logger = logging.getLogger(__name__)
 
 
+def parse_rich_text_with_links(content: str) -> List[Dict[str, Any]]:
+    """Helper converting content into Notion rich text with clickable links."""
+    content_str = str(content)
+    md_match = re.match(r"^\[([^\]]+)\]\((https?://[^\s\)]+)\)$", content_str.strip())
+    if md_match:
+        label, url = md_match.groups()
+        return [
+            {
+                "type": "text",
+                "text": {"content": label, "link": {"url": url}},
+                "annotations": {"bold": True},
+            }
+        ]
+
+    url_match = re.search(r"https?://[^\s,\)\]]+", content_str)
+    if url_match:
+        url = url_match.group(0).rstrip(".,;:)")
+        return [
+            {
+                "type": "text",
+                "text": {"content": content_str, "link": {"url": url}},
+            }
+        ]
+
+    return [
+        {
+            "type": "text",
+            "text": {"content": content_str},
+        }
+    ]
+
+
 def build_text_block(block_type: str, content: str) -> Dict[str, Any]:
-    """Helper creating a standard Notion rich text block."""
+    """Helper creating a standard Notion rich text block with clickable link support."""
     return {
         "object": "block",
         "type": block_type,
         block_type: {
+            "rich_text": parse_rich_text_with_links(content),
+        },
+    }
+
+
+def build_table_block(
+    headers: List[str],
+    rows: List[List[str]],
+    has_column_header: bool = True,
+) -> Dict[str, Any]:
+    """Builds a Notion table block with children table_row blocks."""
+    table_width = len(headers)
+    children = []
+    if has_column_header:
+        children.append(
+            {
+                "type": "table_row",
+                "table_row": {
+                    "cells": [
+                        [{"type": "text", "text": {"content": h}, "annotations": {"bold": True}}]
+                        for h in headers
+                    ]
+                },
+            }
+        )
+    for row in rows:
+        cells = []
+        for val in row:
+            cells.append(parse_rich_text_with_links(val))
+        while len(cells) < table_width:
+            cells.append([{"type": "text", "text": {"content": ""}}])
+        children.append(
+            {
+                "type": "table_row",
+                "table_row": {"cells": cells[:table_width]},
+            }
+        )
+    return {
+        "object": "block",
+        "type": "table",
+        "table": {
+            "table_width": table_width,
+            "has_column_header": has_column_header,
+            "has_row_header": False,
+            "children": children,
+        },
+    }
+
+
+def build_code_block(code_content: str, language: str = "bash") -> Dict[str, Any]:
+    """Builds a Notion code block with syntax highlighting."""
+    return {
+        "object": "block",
+        "type": "code",
+        "code": {
             "rich_text": [
                 {
                     "type": "text",
-                    "text": {"content": content},
+                    "text": {"content": code_content},
                 }
-            ]
+            ],
+            "language": language,
         },
+    }
+
+
+def build_divider_block() -> Dict[str, Any]:
+    """Builds a Notion horizontal divider block."""
+    return {
+        "object": "block",
+        "type": "divider",
+        "divider": {},
     }
 
 
@@ -86,6 +184,99 @@ def _resolve_image_url(
         return public_url or f"http://localhost:8000/frames/{job_id}_{ts}.jpg"
 
 
+def assign_frames_to_sections_and_bullets(
+    sections: List[Dict[str, Any]],
+    extracted_frames: List[Dict[str, Any]],
+    duration: int,
+) -> Dict[int, Dict[int, List[Dict[str, Any]]]]:
+    """Maps each extracted frame to an exact section and the specific bullet point it directly illustrates."""
+    assignments: Dict[int, Dict[int, List[Dict[str, Any]]]] = {
+        i: {} for i in range(len(sections))
+    }
+    if not sections or not extracted_frames:
+        return assignments
+
+    num_sections = len(sections)
+    sec_window = duration / max(num_sections, 1)
+
+    for frame in extracted_frames:
+        f_path = frame.get("image_path", "")
+        if not f_path:
+            continue
+        ts = frame.get("timestamp_sec", 0)
+        target_sec = (frame.get("target_section") or "").lower().strip()
+        related_concept = (frame.get("related_concept") or "").lower().strip()
+        caption_lower = (frame.get("caption") or "").lower().strip()
+
+        # Step 1: Find best matching section index
+        best_sec_idx = None
+
+        # Check explicit target_section match from VLM
+        if target_sec:
+            for s_idx, s in enumerate(sections):
+                s_title = s.get("section_title", "").lower()
+                if target_sec in s_title or s_title in target_sec:
+                    best_sec_idx = s_idx
+                    break
+
+        # Check temporal window match
+        if best_sec_idx is None:
+            for s_idx in range(num_sections):
+                start = s_idx * sec_window
+                end = (s_idx + 1) * sec_window
+                if start <= ts <= end:
+                    best_sec_idx = s_idx
+                    break
+
+        # Check keyword match across section corpus
+        if best_sec_idx is None:
+            max_overlap = 0
+            for s_idx, s in enumerate(sections):
+                corpus = (
+                    s.get("section_title", "")
+                    + " "
+                    + " ".join(s.get("bullet_points", []))
+                ).lower()
+                words = set(re.findall(r"[a-z0-9]{4,}", corpus))
+                overlap = sum(
+                    1 for w in words if w in caption_lower or (target_sec and w in target_sec)
+                )
+                if overlap > max_overlap:
+                    max_overlap = overlap
+                    best_sec_idx = s_idx
+
+        if best_sec_idx is None:
+            best_sec_idx = min(int(ts / max(sec_window, 1.0)), num_sections - 1)
+
+        # Step 2: Find the exact bullet point within best_sec_idx to place the frame immediately AFTER
+        bullets = sections[best_sec_idx].get("bullet_points", [])
+        best_bullet_idx = 0
+        if bullets:
+            max_b_score = 0
+            query = related_concept if related_concept else caption_lower
+            query_words = set(re.findall(r"[a-z0-9]{4,}", query))
+
+            for b_idx, b_text in enumerate(bullets):
+                b_words = set(re.findall(r"[a-z0-9]{4,}", b_text.lower()))
+                score = len(query_words.intersection(b_words))
+                if score > max_b_score:
+                    max_b_score = score
+                    best_bullet_idx = b_idx
+
+            # If no clear keyword winner, distribute by relative progress within the section window
+            if max_b_score == 0:
+                sec_start = best_sec_idx * sec_window
+                rel_ts = max(0, ts - sec_start)
+                ratio = min(1.0, rel_ts / max(sec_window, 1.0))
+                best_bullet_idx = min(int(ratio * len(bullets)), len(bullets) - 1)
+
+        if best_bullet_idx not in assignments[best_sec_idx]:
+            assignments[best_sec_idx][best_bullet_idx] = []
+        assignments[best_sec_idx][best_bullet_idx].append(frame)
+
+    return assignments
+
+
 def construct_page_blocks(
     job: Job,
     public_url_fn: Optional[Callable[[str], str]] = None,
@@ -108,7 +299,10 @@ def construct_page_blocks(
                 "rich_text": [
                     {
                         "type": "text",
-                        "text": {"content": callout_text},
+                        "text": {
+                            "content": callout_text,
+                            "link": {"url": job.youtube_url} if job.youtube_url else None,
+                        },
                     }
                 ],
                 "icon": {"type": "emoji", "emoji": "📝"},
@@ -118,66 +312,123 @@ def construct_page_blocks(
 
     # 2. Executive Overview
     overview = summary_data.get("overview")
+    sections = summary_data.get("sections", [])
     if overview:
         blocks.append(build_text_block("heading_2", "Overview"))
         blocks.append(build_text_block("paragraph", overview))
 
+        # Executive Metadata / Specifications Table
+        sections_count = len(sections)
+        metadata_rows = [
+            ["Video Type", video_type],
+            ["Runtime", f"{duration_min}m {duration_rem_sec}s"],
+            ["Original Source", f"[{job.video_title or 'Watch on YouTube'}]({job.youtube_url})"],
+            ["Topical Coverage", f"{sections_count} Architectural Sections"],
+        ]
+        blocks.append(
+            build_table_block(
+                headers=["Attribute", "Details"],
+                rows=metadata_rows,
+            )
+        )
+
     # 3. Key Resources and References from Video Description
     key_resources = summary_data.get("key_resources", [])
     if key_resources:
+        blocks.append(build_divider_block())
         blocks.append(build_text_block("heading_2", "Key Resources and References"))
+        resource_table_rows = []
         for res_item in key_resources:
-            blocks.append(build_text_block("bulleted_list_item", str(res_item)))
+            res_str = str(res_item)
+            blocks.append(build_text_block("bulleted_list_item", res_str))
 
-    # 4. Topic Sections with Contextual Inline Slides
-    sections = summary_data.get("sections", [])
+            # Derive table row
+            url_match = re.search(r"https?://[^\s,\)\]]+", res_str)
+            if url_match:
+                url = url_match.group(0).rstrip(".,;:)")
+                desc = res_str.replace(url, "").strip(" -:–|") or "Reference Link"
+                cat = (
+                    "Video Tutorial"
+                    if "youtu" in url
+                    else (
+                        "GitHub Repo"
+                        if "github" in url
+                        else ("Documentation" if "doc" in url else "Resource")
+                    )
+                )
+                resource_table_rows.append([desc, cat, f"[Open Resource ↗]({url})"])
+            else:
+                resource_table_rows.append([res_str, "General Reference", "N/A"])
+
+        if resource_table_rows:
+            blocks.append(
+                build_table_block(
+                    headers=["Resource", "Category", "Link"],
+                    rows=resource_table_rows,
+                )
+            )
+
+    # 4. Topic Sections with Contextual In-Text Slides
     extracted_frames = job.extracted_frames or []
-
-    assigned_frame_paths = set()
-    num_sections = len(sections)
     duration = job.duration_sec or 1200
-    section_window = duration / max(num_sections, 1)
+    frame_assignments = assign_frames_to_sections_and_bullets(sections, extracted_frames, duration)
 
     for idx, sec in enumerate(sections):
+        blocks.append(build_divider_block())
         title = sec.get("section_title", "Key Insights")
         bullets = sec.get("bullet_points", [])
         blocks.append(build_text_block("heading_2", title))
-        for bullet in bullets:
-            blocks.append(build_text_block("bulleted_list_item", bullet))
 
-        # Associate frames occurring within this topical window
-        sec_start = idx * section_window
-        sec_end = (idx + 1) * section_window
-        title_keywords = [w for w in title.lower().split() if len(w) > 3]
+        sec_map = frame_assignments.get(idx, {})
 
-        sec_frames = []
-        for frame in extracted_frames:
-            f_path = frame.get("image_path", "")
-            if f_path in assigned_frame_paths:
-                continue
-            ts = frame.get("timestamp_sec", 0)
-            caption_lower = frame.get("caption", "").lower()
-            keyword_match = any(k in caption_lower for k in title_keywords)
+        if not bullets and 0 in sec_map:
+            for f in sec_map[0]:
+                ts = f.get("timestamp_sec", 0)
+                caption = f.get("caption", f"Slide captured at {ts}s")
+                raw_path = f.get("image_path", "")
+                image_url = _resolve_image_url(raw_path, job.id, ts, settings, public_url_fn)
+                blocks.append(build_image_block(image_url=image_url, caption_text=caption))
 
-            if (sec_start <= ts <= sec_end) or keyword_match:
-                sec_frames.append(frame)
-                assigned_frame_paths.add(f_path)
+        for bullet_idx, bullet in enumerate(bullets):
+            b_str = str(bullet).strip()
+            if b_str.startswith("```") and b_str.endswith("```"):
+                code_text = b_str.strip("`").strip()
+                blocks.append(build_code_block(code_text, "bash"))
+            elif any(
+                b_str.startswith(cmd)
+                for cmd in ["docker ", "kubectl ", "npm ", "git ", "pip ", "curl ", "sudo "]
+            ):
+                blocks.append(build_code_block(b_str, "bash"))
+            else:
+                blocks.append(build_text_block("bulleted_list_item", b_str))
 
-        for frame in sec_frames:
-            ts = frame.get("timestamp_sec", 0)
-            caption = frame.get("caption", f"Slide captured at {ts}s")
-            raw_path = frame.get("image_path", "")
-            image_url = _resolve_image_url(raw_path, job.id, ts, settings, public_url_fn)
-            blocks.append(build_image_block(image_url=image_url, caption_text=caption))
+            # Embed assigned image(s) IMMEDIATELY UNDER this bullet point in the text
+            if bullet_idx in sec_map:
+                for f in sec_map[bullet_idx]:
+                    ts = f.get("timestamp_sec", 0)
+                    caption = f.get("caption", f"Slide captured at {ts}s")
+                    raw_path = f.get("image_path", "")
+                    image_url = _resolve_image_url(raw_path, job.id, ts, settings, public_url_fn)
+                    blocks.append(build_image_block(image_url=image_url, caption_text=caption))
 
-    # 5. Remaining Visual Keyframes Gallery
-    remaining_frames = [f for f in extracted_frames if f.get("image_path") not in assigned_frame_paths]
-    if remaining_frames:
-        blocks.append(build_text_block("heading_2", "Visual Slides and Diagrams"))
-        for frame in remaining_frames:
-            ts = frame.get("timestamp_sec", 0)
-            caption = frame.get("caption", f"Frame captured at {ts}s")
-            raw_path = frame.get("image_path", "")
+    # Fallback for any frames not placed within sections (or if no sections were generated)
+    placed_paths = {
+        f.get("image_path")
+        for sec_map in frame_assignments.values()
+        for b_frames in sec_map.values()
+        for f in b_frames
+        if f.get("image_path")
+    }
+    unplaced_frames = [
+        f for f in extracted_frames if f.get("image_path") and f.get("image_path") not in placed_paths
+    ]
+    if unplaced_frames:
+        blocks.append(build_divider_block())
+        blocks.append(build_text_block("heading_2", "Additional Visual References"))
+        for f in unplaced_frames:
+            ts = f.get("timestamp_sec", 0)
+            caption = f.get("caption", f"Slide captured at {ts}s")
+            raw_path = f.get("image_path", "")
             image_url = _resolve_image_url(raw_path, job.id, ts, settings, public_url_fn)
             blocks.append(build_image_block(image_url=image_url, caption_text=caption))
 
@@ -245,46 +496,53 @@ async def process_publish_stage(
         "children": children_blocks,
     }
 
-    try:
-        page_response = await notion.pages.create(**page_payload)
-        page_url = page_response.get("url", f"https://notion.so/{clean_parent_id}")
-    except Exception as e:
-        error_str = str(e).lower()
-        if "429" in error_str or "rate_limited" in error_str:
-            logger.warning(f"Notion API rate limited (429) for job {task.job_id}: {e}")
-            raise
+    # Idempotency safeguard: if a previous attempt already created the Notion page before a worker crash, reuse it
+    if job.notion_page_url:
+        logger.info(
+            f"Job {job.id} already has Notion page {job.notion_page_url}; reusing for idempotency."
+        )
+        page_url = job.notion_page_url
+    else:
+        try:
+            page_response = await notion.pages.create(**page_payload)
+            page_url = page_response.get("url", f"https://notion.so/{clean_parent_id}")
+        except Exception as e:
+            error_str = str(e).lower()
+            if "429" in error_str or "rate_limited" in error_str:
+                logger.warning(f"Notion API rate limited (429) for job {task.job_id}: {e}")
+                raise
 
-        page_created = False
-        if "could not find page" in error_str or "validation_error" in error_str:
-            try:
-                db_payload = {
-                    "parent": {"database_id": clean_parent_id},
-                    "properties": {
-                        "Name": {
-                            "title": [
-                                {
-                                    "type": "text",
-                                    "text": {"content": job.video_title or f"Study Notes: {task.video_id}"},
-                                }
-                            ]
-                        }
-                    },
-                    "children": children_blocks,
-                }
-                page_response = await notion.pages.create(**db_payload)
-                page_url = page_response.get("url", f"https://notion.so/{clean_parent_id}")
-                page_created = True
-            except Exception as db_err:
-                logger.warning(f"Database parent attempt failed: {db_err}")
+            page_created = False
+            if "could not find page" in error_str or "validation_error" in error_str:
+                try:
+                    db_payload = {
+                        "parent": {"database_id": clean_parent_id},
+                        "properties": {
+                            "Name": {
+                                "title": [
+                                    {
+                                        "type": "text",
+                                        "text": {"content": job.video_title or f"Study Notes: {task.video_id}"},
+                                    }
+                                ]
+                            }
+                        },
+                        "children": children_blocks,
+                    }
+                    page_response = await notion.pages.create(**db_payload)
+                    page_url = page_response.get("url", f"https://notion.so/{clean_parent_id}")
+                    page_created = True
+                except Exception as db_err:
+                    logger.warning(f"Database parent attempt failed: {db_err}")
 
-        if not page_created:
-            logger.error(f"Failed to publish Notion page for job {task.job_id}: {e}")
-            job.transition_to(
-                JobStatus.FAILED,
-                error={"code": "NOTION_PUBLISH_FAILED", "message": f"Notion API call failed: {str(e)}"},
-            )
-            await session.commit()
-            return False
+            if not page_created:
+                logger.error(f"Failed to publish Notion page for job {task.job_id}: {e}")
+                job.transition_to(
+                    JobStatus.FAILED,
+                    error={"code": "NOTION_PUBLISH_FAILED", "message": f"Notion API call failed: {str(e)}"},
+                )
+                await session.commit()
+                return False
 
     # Save created Notion URL
     job.notion_page_url = page_url

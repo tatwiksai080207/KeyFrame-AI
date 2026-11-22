@@ -1,8 +1,45 @@
 """Base schemas and abstract interface for multimodal LLM synthesis adapters."""
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
+
+
+class VLMFrameDecision(BaseModel):
+    """Multimodal Vision Language Model judgment for a candidate video slide frame."""
+
+    decision: str = Field(
+        default="KEEP",
+        description="KEEP (informative diagram/slide), DISCARD (webcam talking head/sponsor/blank), or RETRY_OFFSET (diagram incomplete/animating and nearby timestamp would be complete).",
+    )
+    reasoning: str = Field(
+        default="",
+        description="Explanation of visual content quality, completeness, and study value.",
+    )
+    suggested_timestamp_sec: Optional[int] = Field(
+        default=None,
+        description="If decision is RETRY_OFFSET, the suggested integer timestamp seconds to re-sample.",
+    )
+    caption: str = Field(
+        default="",
+        description="If KEEP, explanation detailing WHAT diagram or slide is shown and WHY it was flagged per Constraint B.",
+    )
+    target_section: Optional[str] = Field(
+        default=None,
+        description="The section title from the notes where this visual should be placed.",
+    )
+    related_concept: Optional[str] = Field(
+        default=None,
+        description="The specific bullet point or concept this visual directly illustrates.",
+    )
+    slide_topic: Optional[str] = Field(
+        default=None,
+        description="A concise 2-4 word topic or slide header identifying the diagram (e.g. 'Hypervisor Comparison').",
+    )
+    is_fully_assembled: bool = Field(
+        default=True,
+        description="Whether the slide diagram is complete and fully drawn vs missing expected comparison columns or steps.",
+    )
 
 
 class SlideKeyMoment(BaseModel):
@@ -77,9 +114,12 @@ Requirements:
    - Structure notes into logical topical sections with informative, highly substantive bullet points.
 
 5. Visual Slide Curation (Constraint B):
-   - Identify timestamps (in integer elapsed seconds) where visually important slides, architectural diagrams, whiteboards, or code snippets are discussed.
-   - ONLY flag timestamps that display actual technical diagrams, slide decks, or code on screen. Do NOT flag timestamps that show only the speaker talking head webcam or introductory splash screen without informational content.
-   - Every flagged timestamp MUST have an explanatory caption explaining both WHAT diagram or slide is shown and WHY it was flagged.
+   - You MUST identify between 3 and 8 key visual candidate timestamps across the video (at least 1 per major topic or section) where architectural diagrams, slides, schema, comparisons, workflows, or code snippets are discussed or displayed.
+   - Look for concept transitions, architecture explanations, workflow walkthroughs, or code demonstrations.
+   - CRITICAL TIMING FOR DIAGRAMS AND PROGRESSIVE SLIDES: Technical and educational presentations frequently build up diagrams element by element (e.g. side by side comparisons, multi-step workflows, or architectures where blocks appear sequentially). DO NOT flag the very beginning of the concept when the slide is still mostly blank or only partially drawn. Instead, flag the timestamp towards the CONCLUSION of that explanation where the diagram or slide is FULLY ASSEMBLED, complete, and all comparison columns, components, and labels are displayed.
+   - Our downstream Multimodal Vision Language Model (VLM) will visually inspect each captured frame and filter out talking heads or uninformative screens, so provide candidate timestamps for all significant topics across the video.
+   - Never return an empty key_moments list for technical, educational, or tutorial videos.
+   - Every flagged timestamp MUST have an explanatory caption explaining both WHAT diagram or concept is shown and WHY it was flagged.
    - Timestamp format: The transcript displays timestamps as `[{start_sec}s] [MM:SS]`. Each `timestamp_sec` in your output MUST be the exact integer seconds taken directly from the `{start_sec}s` marker. Never output concatenated minute and second numbers (for example, 08:22 is 502 seconds, never 822; 10:00 is 600 seconds, never 1000). All timestamps must be within the actual video duration.
 
 Output format: You MUST return strictly valid JSON matching this schema:
@@ -120,4 +160,31 @@ class BaseLLMAdapter(ABC):
     ) -> SynthesisResult:
         """Synthesizes structured notes and slide key moments from transcript text."""
         pass
+
+    async def evaluate_frame_vlm(
+        self,
+        image_path: str,
+        timestamp_sec: int,
+        context_text: Optional[str] = None,
+        video_title: Optional[str] = None,
+        duration_sec: Optional[int] = None,
+        notes_sections: Optional[List[Dict[str, Any]]] = None,
+    ) -> VLMFrameDecision:
+        """Evaluates whether candidate frame is an informative slide/diagram, checks completeness, and refines offset."""
+        return VLMFrameDecision(
+            decision="KEEP",
+            reasoning="Default adapter pass",
+            caption=f"Technical frame captured at {timestamp_sec}s",
+        )
+
+    async def evaluate_frame(self, image_path: str) -> dict:
+        """Backward compatible evaluation returning is_informative boolean."""
+        decision = await self.evaluate_frame_vlm(image_path=image_path, timestamp_sec=0)
+        return {
+            "is_informative": decision.decision != "DISCARD",
+            "summary": decision.reasoning,
+            "decision": decision.decision,
+            "caption": decision.caption,
+            "suggested_timestamp_sec": decision.suggested_timestamp_sec,
+        }
 

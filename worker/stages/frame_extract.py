@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 import subprocess
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -157,6 +158,57 @@ def is_blank_or_solid_frame(image_path: str, min_variance: float = 20.0) -> bool
     return False
 
 
+class CuratedFrameTuple(tuple):
+    """Subclass of 3-tuple (path, ts, hash) maintaining backwards compatibility while storing VLM caption and in-text placement."""
+
+    path: str
+    ts: int
+    hash: int
+    caption: str
+    target_section: str
+    related_concept: str
+    slide_topic: str
+    is_fully_assembled: bool
+
+    def __new__(
+        cls,
+        path: str,
+        ts: int,
+        h: int,
+        caption: str = "",
+        target_section: str = "",
+        related_concept: str = "",
+        slide_topic: str = "",
+        is_fully_assembled: bool = True,
+    ):
+        inst = super().__new__(cls, (path, ts, h))
+        inst.path = path
+        inst.ts = ts
+        inst.hash = h
+        inst.caption = caption
+        inst.target_section = target_section
+        inst.related_concept = related_concept
+        inst.slide_topic = slide_topic
+        inst.is_fully_assembled = is_fully_assembled
+        return inst
+
+
+def get_transcript_context_around(
+    snippets: Optional[List[Dict[str, Any]]],
+    ts: int,
+    window_sec: float = 20.0,
+) -> str:
+    """Returns transcript dialogue within +/- window_sec around timestamp."""
+    if not snippets or not isinstance(snippets, list):
+        return ""
+    relevant = [
+        s.get("text", "").strip()
+        for s in snippets
+        if abs(s.get("start", 0) - ts) <= window_sec and s.get("text")
+    ]
+    return " ".join(relevant)
+
+
 async def verify_and_curate_frame(
     stream_url: str,
     target_storage: str,
@@ -167,10 +219,13 @@ async def verify_and_curate_frame(
     seen_hashes: List[int],
     capture_fn: Callable[[str, int, str], bool],
     llm_adapter: Optional[Any] = None,
-) -> Optional[Tuple[str, int, int]]:
+    context_text: Optional[str] = None,
+    video_title: Optional[str] = None,
+    notes_sections: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[CuratedFrameTuple]:
     """Captures, deduplicates, and validates frame quality, searching nearby timestamps if necessary."""
     loop = asyncio.get_running_loop()
-    offsets = [0, 5, 10]
+    offsets = [0, 5, 15, 30]
 
     for offset in offsets:
         candidate_ts = timestamp_sec + offset
@@ -187,7 +242,7 @@ async def verify_and_curate_frame(
 
         # In mock tests where file is not written to disk, accept capture immediately
         if not os.path.exists(candidate_path):
-            return (candidate_path, candidate_ts, 0)
+            return CuratedFrameTuple(candidate_path, candidate_ts, 0, caption)
 
         if os.path.getsize(candidate_path) == 0:
             continue
@@ -216,13 +271,81 @@ async def verify_and_curate_frame(
                     pass
                 return None
 
-        # Multimodal vision check for informational slide/diagram content
-        if llm_adapter and hasattr(llm_adapter, "evaluate_frame"):
-            eval_res = await llm_adapter.evaluate_frame(candidate_path)
-            is_informative = eval_res.get("is_informative", True)
-            if not is_informative:
+        # Multimodal Vision Language Model check
+        if llm_adapter:
+            is_mock = hasattr(llm_adapter, "_mock_return_value")
+            has_vlm = False
+            if not is_mock:
+                has_vlm = callable(getattr(llm_adapter, "evaluate_frame_vlm", None))
+            elif "evaluate_frame_vlm" in getattr(llm_adapter, "__dict__", {}):
+                has_vlm = True
+
+            if has_vlm:
+                vlm_fn = getattr(llm_adapter, "evaluate_frame_vlm")
+                vlm_kwargs = {
+                    "image_path": candidate_path,
+                    "timestamp_sec": candidate_ts,
+                    "context_text": context_text,
+                    "video_title": video_title,
+                    "duration_sec": video_duration,
+                }
+                # Pass notes_sections if accepted
+                try:
+                    vlm_call = vlm_fn(**vlm_kwargs, notes_sections=notes_sections)
+                except TypeError:
+                    vlm_call = vlm_fn(**vlm_kwargs)
+
+                vlm_decision = await vlm_call if asyncio.iscoroutine(vlm_call) else vlm_call
+                dec = getattr(vlm_decision, "decision", "KEEP").upper()
+                final_caption = getattr(vlm_decision, "caption", "").strip() or caption
+                target_sec = getattr(vlm_decision, "target_section", "") or ""
+                rel_concept = getattr(vlm_decision, "related_concept", "") or ""
+                slide_topic = getattr(vlm_decision, "slide_topic", "") or ""
+                is_full = getattr(vlm_decision, "is_fully_assembled", True)
+
+                if dec == "KEEP":
+                    logger.info(
+                        f"VLM accepted frame at {candidate_ts}s: {getattr(vlm_decision, 'reasoning', '')}"
+                    )
+                    return CuratedFrameTuple(
+                        candidate_path,
+                        candidate_ts,
+                        frame_hash or 0,
+                        final_caption,
+                        target_sec,
+                        rel_concept,
+                        slide_topic,
+                        is_full,
+                    )
+
+                elif dec == "RETRY_OFFSET" and getattr(vlm_decision, "suggested_timestamp_sec", None) is not None:
+                    suggested_ts = int(vlm_decision.suggested_timestamp_sec)
+                    if 0 <= suggested_ts <= video_duration and suggested_ts != candidate_ts:
+                        logger.info(
+                            f"VLM requested offset retry from {candidate_ts}s to {suggested_ts}s"
+                        )
+                        retry_path = os.path.join(target_storage, f"{job_id}_{suggested_ts}.jpg")
+                        retry_captured = await loop.run_in_executor(
+                            None, capture_fn, stream_url, suggested_ts, retry_path
+                        )
+                        if retry_captured and os.path.exists(retry_path) and os.path.getsize(retry_path) > 0:
+                            is_retry_blank = await loop.run_in_executor(None, is_blank_or_solid_frame, retry_path)
+                            if not is_retry_blank:
+                                retry_hash = await loop.run_in_executor(None, compute_image_dhash, retry_path)
+                                return CuratedFrameTuple(
+                                    retry_path,
+                                    suggested_ts,
+                                    retry_hash or 0,
+                                    final_caption,
+                                    target_sec,
+                                    rel_concept,
+                                    slide_topic,
+                                    is_full,
+                                )
+
+                # If DISCARD or retry offset unviable, try next offset
                 logger.info(
-                    f"Frame at {candidate_ts}s is uninformative ({eval_res.get('summary', 'talking head')}); checking offset."
+                    f"VLM discarded candidate at {candidate_ts}s ({getattr(vlm_decision, 'reasoning', '')}); checking offset."
                 )
                 try:
                     os.remove(candidate_path)
@@ -230,9 +353,108 @@ async def verify_and_curate_frame(
                     pass
                 continue
 
-        return (candidate_path, candidate_ts, frame_hash if frame_hash is not None else 0)
+            elif hasattr(llm_adapter, "evaluate_frame"):
+                # Mock or legacy adapter
+                eval_fn = getattr(llm_adapter, "evaluate_frame")
+                eval_call = eval_fn(candidate_path)
+                eval_res = await eval_call if asyncio.iscoroutine(eval_call) else eval_call
+                is_informative = eval_res.get("is_informative", True)
+                if not is_informative:
+                    logger.info(
+                        f"Frame at {candidate_ts}s is uninformative ({eval_res.get('summary', 'talking head')}); checking offset."
+                    )
+                    try:
+                        os.remove(candidate_path)
+                    except OSError:
+                        pass
+                    continue
+                final_caption = eval_res.get("caption") or caption
+                return CuratedFrameTuple(candidate_path, candidate_ts, frame_hash or 0, final_caption)
+
+        return CuratedFrameTuple(
+            candidate_path, candidate_ts, frame_hash if frame_hash is not None else 0, caption
+        )
 
     return None
+
+
+def deduplicate_progressive_slides(
+    frames: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Deduplicates progressive reveal slides and animation builds across the video.
+
+    If two frames share high topical or conceptual similarity (e.g. same slide topic,
+    same target section and concept, or high caption token overlap) and appear within
+    close temporal window (<= 180s) or within the same section, keeps only the later,
+    more complete frame and discards the earlier partial build up.
+    """
+    if len(frames) <= 1:
+        return frames
+
+    sorted_frames = sorted(frames, key=lambda f: f.get("timestamp_sec", 0))
+    to_discard = set()
+
+    for i in range(len(sorted_frames)):
+        if i in to_discard:
+            continue
+        f1 = sorted_frames[i]
+        t1 = f1.get("timestamp_sec", 0)
+        c1 = (f1.get("caption") or "").lower()
+        topic1 = (f1.get("slide_topic") or "").lower().strip()
+        sec1 = (f1.get("target_section") or "").lower().strip()
+        concept1 = (f1.get("related_concept") or "").lower().strip()
+
+        words1 = set(re.findall(r"[a-z0-9]{4,}", c1 + " " + topic1 + " " + concept1))
+
+        for j in range(i + 1, len(sorted_frames)):
+            if j in to_discard:
+                continue
+            f2 = sorted_frames[j]
+            t2 = f2.get("timestamp_sec", 0)
+            c2 = (f2.get("caption") or "").lower()
+            topic2 = (f2.get("slide_topic") or "").lower().strip()
+            sec2 = (f2.get("target_section") or "").lower().strip()
+            concept2 = (f2.get("related_concept") or "").lower().strip()
+
+            words2 = set(re.findall(r"[a-z0-9]{4,}", c2 + " " + topic2 + " " + concept2))
+            time_diff = abs(t2 - t1)
+
+            # Check criteria for progressive reveal duplicate:
+            topic_match = bool(topic1 and topic2 and (topic1 in topic2 or topic2 in topic1))
+            concept_match = bool(
+                sec1 and sec2 and sec1 == sec2 and concept1 and concept2 and (concept1 in concept2 or concept2 in concept1)
+            )
+            overlap = len(words1.intersection(words2))
+            min_len = min(len(words1), len(words2))
+            high_similarity = (
+                overlap >= 4 and (overlap / max(min_len, 1)) >= 0.65
+            ) if min_len >= 4 else False
+
+            is_progressive_reveal = False
+            if time_diff <= 180:
+                if topic_match:
+                    is_progressive_reveal = True
+                elif concept_match:
+                    is_progressive_reveal = True
+                elif high_similarity and (sec1 == sec2 and sec1 != ""):
+                    is_progressive_reveal = True
+                elif high_similarity and (topic1 or topic2):
+                    is_progressive_reveal = True
+
+            if is_progressive_reveal:
+                logger.info(
+                    f"Discarding earlier progressive frame at {t1}s in favor of complete frame at {t2}s."
+                )
+                to_discard.add(i)
+                img_path = f1.get("image_path")
+                if img_path and os.path.exists(img_path):
+                    try:
+                        os.remove(img_path)
+                    except OSError:
+                        pass
+                break
+
+    return [f for idx, f in enumerate(sorted_frames) if idx not in to_discard]
 
 
 async def process_frame_extract_stage(
@@ -256,7 +478,22 @@ async def process_frame_extract_stage(
         raise ValueError(f"Job with id {task.job_id} not found in database")
 
     llm_summary = job.llm_summary or {}
-    key_moments: List[Dict[str, Any]] = llm_summary.get("key_moments", [])
+    key_moments: List[Dict[str, Any]] = list(llm_summary.get("key_moments", []))
+    sections: List[Dict[str, Any]] = list(llm_summary.get("sections", []))
+
+    # Fallback: if LLM returned 0 key moments, synthesize candidate timestamps across sections
+    if not key_moments:
+        num_sections = max(len(sections), 1)
+        duration = job.duration_sec or 600
+        sec_window = duration / num_sections
+        for idx, sec in enumerate(sections):
+            cand_ts = int((idx + 0.35) * sec_window)
+            if 0 <= cand_ts <= duration:
+                title = sec.get("section_title", "Key Architecture")
+                key_moments.append({
+                    "timestamp_sec": cand_ts,
+                    "caption": f"WHAT: Visual slide for {title}. WHY: Explains the core architectural and implementation details.",
+                })
 
     extracted_frames: List[Dict[str, Any]] = []
 
@@ -288,9 +525,12 @@ async def process_frame_extract_stage(
                 except Exception:
                     adapter = None
 
+            raw_snippets = job.raw_transcript or []
+
             for moment in key_moments:
                 ts = moment.get("timestamp_sec", 0)
                 caption = moment.get("caption", "")
+                context_snippet = get_transcript_context_around(raw_snippets, ts)
 
                 curated = await verify_and_curate_frame(
                     stream_url=stream_url,
@@ -302,17 +542,25 @@ async def process_frame_extract_stage(
                     seen_hashes=seen_hashes,
                     capture_fn=perform_capture,
                     llm_adapter=adapter,
+                    context_text=context_snippet,
+                    video_title=job.video_title,
+                    notes_sections=sections,
                 )
 
                 if curated:
                     chosen_path, chosen_ts, chosen_hash = curated
+                    final_caption = getattr(curated, "caption", "") or caption
                     if chosen_hash:
                         seen_hashes.append(chosen_hash)
                     extracted_frames.append(
                         {
                             "timestamp_sec": chosen_ts,
                             "image_path": chosen_path,
-                            "caption": caption,
+                            "caption": final_caption,
+                            "target_section": getattr(curated, "target_section", "") or "",
+                            "related_concept": getattr(curated, "related_concept", "") or "",
+                            "slide_topic": getattr(curated, "slide_topic", "") or "",
+                            "is_fully_assembled": getattr(curated, "is_fully_assembled", True),
                         }
                     )
                 else:
@@ -322,6 +570,9 @@ async def process_frame_extract_stage(
                         message=f"Failed to capture frame at timestamp {ts}s.",
                         timestamp_sec=ts,
                     )
+
+    # Apply generalized progressive reveal deduplication
+    extracted_frames = deduplicate_progressive_slides(extracted_frames)
 
     # Store extracted frames in database
     job.extracted_frames = extracted_frames

@@ -264,3 +264,216 @@ async def test_verify_and_curate_frame_offset_and_vision_fallback(tmp_path):
         assert chosen_hash == 67890
 
 
+def test_get_transcript_context_around():
+    """Verify context extraction extracts text within temporal window."""
+    from worker.stages.frame_extract import get_transcript_context_around
+
+    assert get_transcript_context_around(None, 50) == ""
+    assert get_transcript_context_around([], 50) == ""
+
+    snippets = [
+        {"start": 10.0, "text": "Welcome to the lecture"},
+        {"start": 45.0, "text": "Notice how the broker routes messages"},
+        {"start": 55.0, "text": "Here is the architectural diagram"},
+        {"start": 120.0, "text": "In conclusion for today"},
+    ]
+    # At ts=50 with default window=20s, snippets at 45.0 and 55.0 are captured
+    ctx = get_transcript_context_around(snippets, 50, window_sec=20.0)
+    assert "Notice how the broker routes messages" in ctx
+    assert "Here is the architectural diagram" in ctx
+    assert "Welcome to the lecture" not in ctx
+    assert "In conclusion" not in ctx
+
+
+@pytest.mark.asyncio
+async def test_verify_and_curate_frame_vlm_keep_and_retry(tmp_path):
+    """Verify verify_and_curate_frame handles VLM KEEP and RETRY_OFFSET decisions."""
+    from unittest.mock import AsyncMock, MagicMock
+    from worker.llm.base import VLMFrameDecision
+    from worker.stages.frame_extract import verify_and_curate_frame
+
+    def mock_capture(url, ts, out_path):
+        with open(out_path, "wb") as f:
+            f.write(b"frame_bytes")
+        return True
+
+    # 1. Test KEEP
+    mock_adapter_keep = MagicMock()
+    mock_adapter_keep.evaluate_frame_vlm = AsyncMock(
+        return_value=VLMFrameDecision(
+            decision="KEEP",
+            reasoning="Crisp database schema diagram",
+            caption="WHAT: High-level database schema. WHY: Crucial for understanding foreign key relations.",
+        )
+    )
+
+    with patch("worker.stages.frame_extract.is_blank_or_solid_frame", return_value=False), \
+         patch("worker.stages.frame_extract.compute_image_dhash", return_value=11111):
+
+        res_keep = await verify_and_curate_frame(
+            stream_url="https://test.googlevideo.com/playback",
+            target_storage=str(tmp_path),
+            job_id="job_vlm_keep",
+            timestamp_sec=30,
+            caption="Initial caption",
+            video_duration=300,
+            seen_hashes=[],
+            capture_fn=mock_capture,
+            llm_adapter=mock_adapter_keep,
+        )
+
+        assert res_keep is not None
+        path, ts, dhash = res_keep
+        assert ts == 30
+        assert dhash == 11111
+        assert "database schema" in res_keep.caption
+
+    # 2. Test RETRY_OFFSET
+    mock_adapter_retry = MagicMock()
+    mock_adapter_retry.evaluate_frame_vlm = AsyncMock(
+        return_value=VLMFrameDecision(
+            decision="RETRY_OFFSET",
+            reasoning="Animation in progress, final state visible at 35s",
+            suggested_timestamp_sec=35,
+            caption="WHAT: Complete pipeline animation. WHY: Shows full queue flow.",
+        )
+    )
+
+    with patch("worker.stages.frame_extract.is_blank_or_solid_frame", return_value=False), \
+         patch("worker.stages.frame_extract.compute_image_dhash", return_value=22222):
+
+        res_retry = await verify_and_curate_frame(
+            stream_url="https://test.googlevideo.com/playback",
+            target_storage=str(tmp_path),
+            job_id="job_vlm_retry",
+            timestamp_sec=30,
+            caption="Initial caption",
+            video_duration=300,
+            seen_hashes=[],
+            capture_fn=mock_capture,
+            llm_adapter=mock_adapter_retry,
+        )
+
+        assert res_retry is not None
+        path, ts, dhash = res_retry
+        assert ts == 35
+        assert dhash == 22222
+        assert "Complete pipeline animation" in res_retry.caption
+
+
+@pytest.mark.asyncio
+async def test_process_frame_extract_fallback_when_key_moments_empty(tmp_path):
+    """Verify frame extract synthesizes candidate timestamps across sections when key_moments is empty."""
+    from common.broker import StageMessage
+    from common.models import Job, JobStatus
+    from worker.stages.frame_extract import process_frame_extract_stage
+    from tests.test_publish import get_test_db_session
+
+    async with get_test_db_session() as db_session:
+        job = Job(
+            video_id="fallback_vid_1",
+            youtube_url="https://www.youtube.com/watch?v=fallback_vid_1",
+            notion_token="dummy_notion_token",
+            status=JobStatus.EXTRACTING_FRAMES.value,
+            progress=50,
+            duration_sec=600,
+            llm_summary={
+                "overview": "Overview of proxies.",
+                "sections": [
+                    {"section_title": "Forward Proxy", "bullet_points": ["Filtering"]},
+                    {"section_title": "Reverse Proxy", "bullet_points": ["Load balancing"]},
+                ],
+                "key_moments": [],  # Empty key moments from LLM!
+            },
+        )
+        db_session.add(job)
+        await db_session.commit()
+
+        task = StageMessage(
+            job_id=job.id,
+            stage="frame_extract",
+            video_id=job.video_id,
+            youtube_url=job.youtube_url,
+            notion_token=job.notion_token,
+        )
+
+        def mock_capture(url, ts, out_path):
+            with open(out_path, "wb") as f:
+                f.write(b"frame_data")
+            return True
+
+        from unittest.mock import AsyncMock, MagicMock
+        mock_adapter = MagicMock()
+        from worker.llm.base import VLMFrameDecision
+        mock_adapter.evaluate_frame_vlm = AsyncMock(
+            return_value=VLMFrameDecision(
+                decision="KEEP",
+                reasoning="Clear architecture slide",
+                caption="WHAT: System diagram. WHY: Visualizes key architectural flows.",
+            )
+        )
+
+        with patch("worker.stages.frame_extract.is_blank_or_solid_frame", return_value=False), \
+             patch("worker.stages.frame_extract.compute_image_dhash", side_effect=[10101, 20202, 30303, 40404]):
+
+            success = await process_frame_extract_stage(
+                task=task,
+                session=db_session,
+                stream_url_fn=lambda url: "https://playback.test/stream",
+                capture_fn=mock_capture,
+                storage_dir=str(tmp_path),
+                llm_adapter=mock_adapter,
+            )
+
+            assert success is True
+
+            from sqlalchemy import select
+            result = await db_session.execute(select(Job).where(Job.id == job.id))
+            updated_job = result.scalar_one()
+
+            # Must have synthesized candidate frames from the 2 sections despite key_moments being empty
+            assert len(updated_job.extracted_frames) == 2
+            assert updated_job.status == JobStatus.PUBLISHING.value
+
+
+def test_deduplicate_progressive_slides():
+    """Verifies that earlier partial builds of the same slide/topic are dropped in favor of fully assembled diagrams."""
+    from worker.stages.frame_extract import deduplicate_progressive_slides
+
+    candidate_frames = [
+        {
+            "timestamp_sec": 30,
+            "image_path": "/storage/frame_30.jpg",
+            "caption": "WHAT: Concept introduction diagram showing a physical computer. WHY: Explains baseline before virtualization.",
+            "slide_topic": "Virtual Machine Architecture",
+            "target_section": "Introduction to Virtual Machines",
+            "related_concept": "Baseline physical computer hardware and OS",
+        },
+        {
+            "timestamp_sec": 75,
+            "image_path": "/storage/frame_75.jpg",
+            "caption": "WHAT: Full conceptual diagram illustrating virtualization architecture with guest operating systems. WHY: Demystifies hardware abstraction.",
+            "slide_topic": "Virtual Machine Architecture",
+            "target_section": "Introduction to Virtual Machines",
+            "related_concept": "Virtualization layer running multiple guest OS",
+        },
+        {
+            "timestamp_sec": 320,
+            "image_path": "/storage/frame_320.jpg",
+            "caption": "WHAT: Hypervisor classification comparing Type 1 and Type 2. WHY: Delineates bare metal vs hosted systems.",
+            "slide_topic": "Hypervisor Architecture",
+            "target_section": "Hypervisors",
+            "related_concept": "Type 1 vs Type 2 hypervisors",
+        },
+    ]
+
+    deduped = deduplicate_progressive_slides(candidate_frames)
+    # Earlier frame at 30s should be dropped; only 75s and 320s remain
+    assert len(deduped) == 2
+    assert deduped[0]["timestamp_sec"] == 75
+    assert deduped[1]["timestamp_sec"] == 320
+
+
+
+
+

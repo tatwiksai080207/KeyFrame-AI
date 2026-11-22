@@ -113,6 +113,14 @@ async def test_worker_crash_and_idempotent_redelivery_simulation():
         assert final_job.status == JobStatus.COMPLETED.value
         assert final_job.notion_page_url == "https://notion.so/unique_page"
 
+        # Step 4: Redelivery of publish stage reuses existing page, ensuring zero duplicate Notion pages
+        await process_publish_stage(
+            task=publish_task,
+            session=db_session,
+            notion_client_instance=mock_notion,
+        )
+        assert mock_notion.pages.create.call_count == 1  # Still 1, never duplicated!
+
 
 @pytest.mark.asyncio
 async def test_http_429_exponential_backoff_and_recovery():

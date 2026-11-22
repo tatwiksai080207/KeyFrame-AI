@@ -72,6 +72,30 @@ async def test_post_job_valid_youtube_url_enqueued(test_client):
 
 
 @pytest.mark.asyncio
+async def test_post_job_short_url_and_trailing_slash(test_client):
+    """POST /jobs with youtu.be short URL and trailing slash extracts correct 11-char video ID."""
+    mock_publish = AsyncMock()
+
+    async with get_test_gateway_db() as db_session:
+        @asynccontextmanager
+        async def mock_db_ctx():
+            yield db_session
+
+        with patch("gateway.routes.get_db_session", mock_db_ctx), patch(
+            "gateway.routes.publish_stage_task", mock_publish
+        ):
+            payload = {
+                "youtube_url": "https://youtu.be/dQw4w9WgXcQ/",
+                "notion_token": "secret_test_token_123",
+            }
+            response = await test_client.post("/jobs", json=payload)
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["video_id"] == "dQw4w9WgXcQ"
+
+
+@pytest.mark.asyncio
 async def test_post_job_invalid_url_rejected(test_client):
     """POST /jobs with non-YouTube or malformed URL returns HTTP 422."""
     async with get_test_gateway_db() as db_session:

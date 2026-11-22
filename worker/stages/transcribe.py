@@ -27,6 +27,14 @@ def extract_metadata_from_ytdlp(youtube_url: str) -> Tuple[Optional[int], Option
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
+            "http_headers": {
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            "extractor_args": {
+                "youtube": {
+                    "lang": ["en"],
+                }
+            },
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(youtube_url, download=False)
@@ -169,10 +177,19 @@ async def process_transcribe_stage(
     # Store transcript, duration, title, and description
     job.raw_transcript = transcript
     job.duration_sec = duration_sec
-    has_cyrillic = any(ord(c) > 127 for c in (video_title or ""))
-    has_client_latin = bool(job.video_title and any(ord(c) <= 127 for c in job.video_title))
-    if not (has_cyrillic and has_client_latin):
-        job.video_title = video_title or job.video_title
+
+    def _has_cyrillic(text: Optional[str]) -> bool:
+        return bool(text and any("\u0400" <= c <= "\u04ff" for c in text))
+
+    client_title = job.video_title if job.video_title and job.video_title != "Preparing video..." else None
+
+    if _has_cyrillic(video_title) and client_title and not _has_cyrillic(client_title):
+        job.video_title = client_title
+    elif _has_cyrillic(video_title) and not client_title:
+        job.video_title = f"YouTube Video ({task.video_id})"
+    else:
+        job.video_title = video_title or client_title or f"YouTube Video ({task.video_id})"
+
     job.video_description = video_description
 
     # Transition to SUMMARIZING stage

@@ -62,10 +62,14 @@ function describeWarning(warning) {
 }
 
 function describeError(status) {
-  if (status.status === "DEAD_LETTERED") {
-    return "This video could not be processed after several attempts.";
-  }
   const error = status.error || {};
+  const msg = (error.message || "").toLowerCase();
+  if (msg.includes("blocking requests") || msg.includes("too many requests") || msg.includes("429")) {
+    return "YouTube temporarily rate limited caption fetching for this IP. Please wait a few minutes before retrying.";
+  }
+  if (status.status === "DEAD_LETTERED") {
+    return error.message || "This video could not be processed after several attempts.";
+  }
   return ERROR_MESSAGES[error.code] || error.message || "Something went wrong.";
 }
 
@@ -357,7 +361,7 @@ async function saveSettings() {
   } catch (err) {
     status.textContent =
       "Enter a valid server address, e.g. http://localhost:8000";
-    status.style.color = "#dc2626";
+    status.style.color = "var(--red)";
     return;
   }
 
@@ -369,7 +373,7 @@ async function saveSettings() {
   $("token-input").value = "";
   await loadSettings();
   status.textContent = "Saved";
-  status.style.color = "#16a34a";
+  status.style.color = "var(--green)";
   setTimeout(() => {
     if (status.textContent === "Saved") status.textContent = "";
   }, 2500);

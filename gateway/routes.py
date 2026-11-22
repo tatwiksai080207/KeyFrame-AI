@@ -26,8 +26,8 @@ def extract_video_id(url: str) -> str:
     video_id = None
 
     if parsed.hostname == "youtu.be":
-        video_id = parsed.path.lstrip("/")
-    elif parsed.hostname in WATCH_HOSTS and parsed.path == "/watch":
+        video_id = parsed.path.strip("/")
+    elif parsed.hostname in WATCH_HOSTS and parsed.path.rstrip("/") == "/watch":
         video_id = parse_qs(parsed.query).get("v", [None])[0]
 
     if not video_id or not VIDEO_ID_PATTERN.match(video_id):

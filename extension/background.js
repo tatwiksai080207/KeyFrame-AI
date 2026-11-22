@@ -111,10 +111,15 @@ async function refreshJobs() {
       try {
         const fresh = await apiRequest(`/jobs/${item.job_id}`);
         const freshHasCyrillic = /[а-яА-ЯёЁ]/.test(fresh.video_title || "");
-        const itemHasLatin = /[a-zA-Z]/.test(item.video_title || "");
-        const chosenTitle = (freshHasCyrillic && itemHasLatin)
-          ? item.video_title
-          : (fresh.video_title || item.video_title || "YouTube Video");
+        const itemHasLatin = /[a-zA-Z]/.test(item.video_title || "") && item.video_title !== "Preparing video...";
+        let chosenTitle = fresh.video_title || item.video_title || "YouTube Video";
+        if (freshHasCyrillic) {
+          if (itemHasLatin) {
+            chosenTitle = item.video_title;
+          } else {
+            chosenTitle = "YouTube Video";
+          }
+        }
         const merged = {
           ...item,
           ...fresh,

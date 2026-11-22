@@ -284,3 +284,71 @@ def test_construct_page_blocks_with_resources_and_inline_slides():
     assert image_blocks[0]["image"]["caption"][0]["text"]["content"] == "Terminal showing docker compose output."
 
 
+def test_construct_page_blocks_interactive_links_and_tables():
+    """Verify construct_page_blocks builds interactive Notion links, tables, dividers, and code blocks."""
+    job = Job(
+        video_id="interactive_vid",
+        youtube_url="https://www.youtube.com/watch?v=interactive_vid",
+        notion_token="secret_key",
+        duration_sec=900,
+        llm_summary={
+            "video_type": "Architecture Walkthrough",
+            "overview": "High level architecture of distributed microservices.",
+            "key_resources": [
+                "NGINX Ingress: https://kubernetes.github.io/ingress-nginx/",
+                "Docker Compose Reference: https://docs.docker.com/compose/",
+            ],
+            "sections": [
+                {
+                    "section_title": "Gateway Configuration",
+                    "bullet_points": [
+                        "docker run -d -p 80:80 nginx:alpine",
+                        "Configure upstream targets at https://api.internal/v1",
+                    ],
+                }
+            ],
+            "key_moments": [],
+        },
+        extracted_frames=[],
+    )
+
+    blocks = construct_page_blocks(job)
+
+    # 1. Header callout must contain a clickable link to YouTube
+    callout = blocks[0]
+    assert callout["type"] == "callout"
+    assert callout["callout"]["rich_text"][0]["text"]["link"]["url"] == "https://www.youtube.com/watch?v=interactive_vid"
+
+    # 2. Check for Table blocks (Metadata table and Resources table)
+    table_blocks = [b for b in blocks if b["type"] == "table"]
+    assert len(table_blocks) >= 2
+
+    # Verify first table is Metadata table
+    meta_table = table_blocks[0]["table"]
+    assert meta_table["table_width"] == 2
+    assert meta_table["has_column_header"] is True
+    # Rows should include Video Type, Runtime, Original Source, Topical Coverage
+    assert len(meta_table["children"]) == 5  # 1 header + 4 rows
+
+    # Verify second table is Resources table
+    res_table = table_blocks[1]["table"]
+    assert res_table["table_width"] == 3
+    assert res_table["has_column_header"] is True
+
+    # 3. Check for Divider blocks
+    divider_blocks = [b for b in blocks if b["type"] == "divider"]
+    assert len(divider_blocks) >= 1
+
+    # 4. Check for Code block for CLI command
+    code_blocks = [b for b in blocks if b["type"] == "code"]
+    assert len(code_blocks) >= 1
+    assert "docker run -d -p 80:80 nginx:alpine" in code_blocks[0]["code"]["rich_text"][0]["text"]["content"]
+    assert code_blocks[0]["code"]["language"] == "bash"
+
+    # 5. Check interactive link in bullet point
+    bullets = [b for b in blocks if b["type"] == "bulleted_list_item"]
+    api_bullet = next(b for b in bullets if "api.internal" in b["bulleted_list_item"]["rich_text"][0]["text"]["content"])
+    assert api_bullet["bulleted_list_item"]["rich_text"][0]["text"]["link"]["url"] == "https://api.internal/v1"
+
+
+
